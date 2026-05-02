@@ -1,0 +1,219 @@
+import type { AccountKpi, AvitoItem, ItemMetrics } from '../types';
+
+export const formatRub = (value: number): string =>
+  new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0,
+  }).format(value);
+
+export const formatNumber = (value: number): string =>
+  new Intl.NumberFormat('ru-RU').format(Math.round(value));
+
+export const formatPercent = (value: number, digits = 1): string =>
+  `${value.toFixed(digits).replace('.', ',')}%`;
+
+export function calcCpl(spend: number, contacts: number): number | null {
+  if (!contacts || contacts <= 0) return null;
+  return spend / contacts;
+}
+
+export function calcConversion(views: number, contacts: number): number | null {
+  if (!views || views <= 0) return null;
+  return (contacts / views) * 100;
+}
+
+export function calcRoi(revenue: number | undefined, spend: number): number | null {
+  if (!spend || revenue === undefined) return null;
+  return ((revenue - spend) / spend) * 100;
+}
+
+export function calcRoas(revenue: number | undefined, spend: number): number | null {
+  if (!spend || revenue === undefined) return null;
+  return revenue / spend;
+}
+
+export function calcBudgetUsage(spend: number, planned: number): number {
+  if (!planned) return 0;
+  return (spend / planned) * 100;
+}
+
+export function calcKpiProgress(current: number, target: number): number {
+  if (!target) return 0;
+  return (current / target) * 100;
+}
+
+export type AccountStats = {
+  totalSpend: number;
+  totalViews: number;
+  totalContacts: number;
+  totalFavorites: number;
+  totalRevenue: number;
+  averageCpl: number | null;
+  averageConversion: number | null;
+  roi: number | null;
+  roas: number | null;
+  budgetUsage: number;
+  leadsProgress: number;
+  cplProgress: number | null;
+  conversionProgress: number | null;
+  roiProgress: number | null;
+  warnings: string[];
+};
+
+export function calculateAccountStats(
+  items: AvitoItem[],
+  kpi: AccountKpi
+): AccountStats {
+  const totalSpend = items.reduce((s, i) => s + i.spend, 0);
+  const totalViews = items.reduce((s, i) => s + i.views, 0);
+  const totalContacts = items.reduce((s, i) => s + i.contacts, 0);
+  const totalFavorites = items.reduce((s, i) => s + i.favorites, 0);
+  const totalRevenue = items.reduce((s, i) => s + (i.revenue ?? 0), 0);
+
+  const averageCpl = calcCpl(totalSpend, totalContacts);
+  const averageConversion = calcConversion(totalViews, totalContacts);
+  const roi = calcRoi(totalRevenue || undefined, totalSpend);
+  const roas = calcRoas(totalRevenue || undefined, totalSpend);
+  const budgetUsage = calcBudgetUsage(totalSpend, kpi.monthlyBudget);
+  const leadsProgress = calcKpiProgress(totalContacts, kpi.targetLeads);
+  const cplProgress =
+    averageCpl != null ? (kpi.targetCpl / averageCpl) * 100 : null;
+  const conversionProgress =
+    averageConversion != null
+      ? calcKpiProgress(averageConversion, kpi.targetConversionRate)
+      : null;
+  const roiProgress = roi != null ? calcKpiProgress(roi, kpi.targetRoi) : null;
+
+  const warnings: string[] = [];
+  if (averageCpl != null && averageCpl > kpi.targetCpl * (1 + kpi.allowedOverspend / 100)) {
+    warnings.push(
+      `Средний CPL ${formatRub(averageCpl)} превышает целевой ${formatRub(
+        kpi.targetCpl
+      )} с учётом допустимого перерасхода ${kpi.allowedOverspend}%.`
+    );
+  }
+  if (budgetUsage > 100) {
+    warnings.push(
+      `Месячный бюджет израсходован на ${formatPercent(budgetUsage, 0)} — превышение ${formatRub(
+        totalSpend - kpi.monthlyBudget
+      )}.`
+    );
+  }
+  if (averageConversion != null && averageConversion < kpi.targetConversionRate * 0.7) {
+    warnings.push(
+      `Конверсия ${formatPercent(averageConversion)} ниже целевой ${formatPercent(
+        kpi.targetConversionRate
+      )} более чем на 30%.`
+    );
+  }
+  const itemsWithoutLeads = items.filter(
+    (i) => i.status === 'active' && i.spend > 500 && i.contacts === 0
+  ).length;
+  if (itemsWithoutLeads > 0) {
+    warnings.push(
+      `${itemsWithoutLeads} активных объявлений тратят бюджет без обращений.`
+    );
+  }
+
+  return {
+    totalSpend,
+    totalViews,
+    totalContacts,
+    totalFavorites,
+    totalRevenue,
+    averageCpl,
+    averageConversion,
+    roi,
+    roas,
+    budgetUsage,
+    leadsProgress,
+    cplProgress,
+    conversionProgress,
+    roiProgress,
+    warnings,
+  };
+}
+
+export type ItemEfficiency = 'effective' | 'overspend' | 'lowConversion' | 'noData' | 'noLeads' | 'average';
+
+export function classifyItem(item: AvitoItem, kpi: AccountKpi): ItemEfficiency {
+  const cpl = calcCpl(item.spend, item.contacts);
+  const cr = calcConversion(item.views, item.contacts);
+  const dataIsThin = item.views < 200 && item.spend < 1500;
+
+  if (dataIsThin) return 'noData';
+  if (item.spend > 1000 && item.contacts === 0) return 'noLeads';
+  if (cpl != null && cpl > kpi.targetCpl * 1.4) return 'overspend';
+  if (cr != null && cr < kpi.targetConversionRate * 0.6 && item.views > 1000)
+    return 'lowConversion';
+  if (cpl != null && cpl <= kpi.targetCpl) return 'effective';
+  return 'average';
+}
+
+export function categoryAverages(items: AvitoItem[]) {
+  const groups = new Map<string, { spend: number; contacts: number; views: number }>();
+  for (const it of items) {
+    const g = groups.get(it.category) ?? { spend: 0, contacts: 0, views: 0 };
+    g.spend += it.spend;
+    g.contacts += it.contacts;
+    g.views += it.views;
+    groups.set(it.category, g);
+  }
+  const out = new Map<string, { cpl: number | null; conversion: number | null; spend: number }>();
+  for (const [k, v] of groups.entries()) {
+    out.set(k, {
+      cpl: calcCpl(v.spend, v.contacts),
+      conversion: calcConversion(v.views, v.contacts),
+      spend: v.spend,
+    });
+  }
+  return out;
+}
+
+export function regionAverages(items: AvitoItem[]) {
+  const groups = new Map<string, { spend: number; contacts: number; views: number }>();
+  for (const it of items) {
+    const g = groups.get(it.region) ?? { spend: 0, contacts: 0, views: 0 };
+    g.spend += it.spend;
+    g.contacts += it.contacts;
+    g.views += it.views;
+    groups.set(it.region, g);
+  }
+  const out: Array<{ region: string; cpl: number | null; conversion: number | null; spend: number; contacts: number }> = [];
+  for (const [k, v] of groups.entries()) {
+    out.push({
+      region: k,
+      cpl: calcCpl(v.spend, v.contacts),
+      conversion: calcConversion(v.views, v.contacts),
+      spend: v.spend,
+      contacts: v.contacts,
+    });
+  }
+  return out;
+}
+
+export function aggregateMetricsByDate(metrics: ItemMetrics[]) {
+  const map = new Map<string, { date: string; views: number; contacts: number; spend: number; favorites: number }>();
+  for (const m of metrics) {
+    const cur = map.get(m.date) ?? {
+      date: m.date,
+      views: 0,
+      contacts: 0,
+      spend: 0,
+      favorites: 0,
+    };
+    cur.views += m.views;
+    cur.contacts += m.contacts;
+    cur.spend += m.spend;
+    cur.favorites += m.favorites;
+    map.set(m.date, cur);
+  }
+  return Array.from(map.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((d) => ({
+      ...d,
+      cpl: d.contacts > 0 ? +(d.spend / d.contacts).toFixed(0) : 0,
+      conversion: d.views > 0 ? +((d.contacts / d.views) * 100).toFixed(2) : 0,
+    }));
+}

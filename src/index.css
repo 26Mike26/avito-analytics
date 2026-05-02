@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0d0d10;
+  color: #ececf0;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* Скрытые декоративные «шёлковые» линии для тёмного фона */
+.silk-bg {
+  position: relative;
+  overflow: hidden;
+}
+.silk-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 40% at 110% -10%, rgba(255, 106, 0, 0.08) 0%, rgba(255, 106, 0, 0) 60%),
+    radial-gradient(50% 35% at -10% 110%, rgba(255, 106, 0, 0.06) 0%, rgba(255, 106, 0, 0) 60%),
+    linear-gradient(125deg, rgba(255, 255, 255, 0.025) 0%, rgba(255, 255, 255, 0) 35%),
+    linear-gradient(295deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0) 40%);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a33;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a45;
+}
+
+/* Заголовки разделов в духе Genesis: UPPERCASE с трекингом */
+.h-display {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Recharts: тёмная тема */
+.recharts-default-tooltip,
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: #131318 !important;
+  border: 1px solid #2a2a33 !important;
+  border-radius: 12px !important;
+  color: #ececf0 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.recharts-tooltip-label,
+.recharts-tooltip-item-list .recharts-tooltip-item {
+  color: #ececf0 !important;
+}
+.recharts-cartesian-axis-tick-value tspan,
+.recharts-text {
+  fill: #a8a8b3 !important;
+}
+.recharts-legend-item-text {
+  color: #cfcfd6 !important;
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-800 rounded-2xl border border-ink-700/80 shadow-card relative;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0) 30%);
+  }
+  .card-padded {
+    @apply card p-5;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-0;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-400 focus:ring-accent/40;
+    box-shadow: 0 6px 20px rgba(255, 106, 0, 0.25);
+  }
+  .btn-secondary {
+    @apply btn bg-transparent text-ink-100 border border-ink-700 hover:bg-ink-800 hover:border-ink-600 focus:ring-ink-700;
+  }
+  .btn-danger {
+    @apply btn bg-rose-500/10 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20 focus:ring-rose-500/30;
+  }
+  .btn-ghost {
+    @apply btn text-ink-300 hover:text-white hover:bg-ink-800;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60;
+  }
+  select.input {
+    color-scheme: dark;
+  }
+
+  .label {
+    @apply text-xs font-medium text-ink-400 mb-1.5 block uppercase tracking-wide;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide;
+  }
+
+  .table-th {
+    @apply text-left text-[11px] uppercase tracking-wide font-semibold text-ink-400 px-3 py-2.5 bg-ink-850 border-b border-ink-700;
+  }
+  .table-td {
+    @apply px-3 py-2.5 text-sm text-ink-200 border-b border-ink-800;
+  }
+  .table-row:hover {
+    @apply bg-ink-850/70;
+  }
+
+  /* Стиль pill-навигации в шапке (как у Genesis) */
+  .pill-nav {
+    @apply inline-flex items-center gap-1 bg-ink-850 border border-ink-700 rounded-full p-1;
+  }
+  .pill-nav-item {
+    @apply inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-full text-ink-300 transition;
+  }
+  .pill-nav-item.active {
+    @apply bg-ink-800 text-white shadow-inner;
+  }
+
+  /* Аватар с оранжевой обводкой и glow (как фото команды) */
+  .avatar-orange {
+    @apply rounded-full ring-2 ring-accent/80;
+    box-shadow: 0 0 0 4px rgba(255, 106, 0, 0.12), 0 0 24px rgba(255, 106, 0, 0.25);
+  }
+
+  /* «Декоративные» оранжевые orbs */
+  .orange-orb {
+    background: radial-gradient(circle at 35% 35%, #ffb578 0%, #ff7a1a 45%, #b84a00 100%);
+    box-shadow: 0 8px 24px rgba(255, 106, 0, 0.35);
+    border-radius: 999px;
+  }
+}
