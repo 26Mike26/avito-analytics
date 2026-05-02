@@ -3,3 +3,7 @@ dist
 .env
 .env.local
 .DS_Store
+
+# Клонированные референсы (полное содержимое скопировано в docs/)
+_skill-ref
+_api-ref

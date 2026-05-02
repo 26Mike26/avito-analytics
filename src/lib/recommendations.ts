@@ -27,6 +27,33 @@ function id() {
 
 export type Confidence = 'high' | 'medium' | 'low';
 
+/**
+ * Типы решений по продвижению — взяты из avito-skill `references/decision-rules.md`
+ * и `scripts/promotion_decision_preview.py:preview_decision`.
+ */
+export type Decision =
+  | 'promote_candidate'
+  | 'do_not_promote_yet'
+  | 'improve_listing_first'
+  | 'stop_or_reduce_spend'
+  | 'test_low_budget'
+  | 'inspect_current_promotion'
+  | 'scale_paid'
+  | 'pause_or_archive'
+  | 'no_change';
+
+export const decisionLabels: Record<Decision, string> = {
+  promote_candidate: 'Кандидат на продвижение',
+  do_not_promote_yet: 'Пока не продвигать',
+  improve_listing_first: 'Сначала улучшить объявление',
+  stop_or_reduce_spend: 'Остановить или снизить расход',
+  test_low_budget: 'Протестировать на низком бюджете',
+  inspect_current_promotion: 'Проверить текущую кампанию',
+  scale_paid: 'Масштабировать платное продвижение',
+  pause_or_archive: 'Поставить на паузу или архив',
+  no_change: 'Без изменений',
+};
+
 export type BidRecommendation = {
   itemId: string;
   current: number;
@@ -36,6 +63,7 @@ export type BidRecommendation = {
   reasons: string[];
   priority: RecommendationPriority;
   confidence: Confidence;
+  decision: Decision;
   forecastSpend: number;
   forecastContacts: number;
   forecastSpendDelta: number;
@@ -96,6 +124,41 @@ function computeCategoryStats(items: AvitoItem[]): Map<string, CategoryStats> {
     });
   }
   return out;
+}
+
+/**
+ * Порт логики `preview_decision` из avito-skill (`scripts/promotion_decision_preview.py`).
+ * Возвращает один из ярлыков решения и риск.
+ *
+ * Используется для классификации, к какой группе действий относится объявление,
+ * прежде чем мы предложим конкретную ставку.
+ */
+export function previewDecision(
+  views: number,
+  contacts: number,
+  spend: number,
+  hasPromotion: boolean
+): { decision: Decision; risk: 'low' | 'medium' | 'high' } {
+  const conversion = views > 0 ? contacts / views : 0;
+  if (hasPromotion) {
+    return {
+      decision: 'inspect_current_promotion',
+      risk: 'medium',
+    };
+  }
+  if (views <= 0 && spend <= 0) {
+    return { decision: 'test_low_budget', risk: 'medium' };
+  }
+  if (views > 1000 && contacts <= 0) {
+    return { decision: 'improve_listing_first', risk: 'high' };
+  }
+  if (spend > 1000 && contacts <= 0) {
+    return { decision: 'stop_or_reduce_spend', risk: 'high' };
+  }
+  if (conversion > 0 && contacts >= 5) {
+    return { decision: 'promote_candidate', risk: 'medium' };
+  }
+  return { decision: 'do_not_promote_yet', risk: 'low' };
 }
 
 export function calculateBidRecommendation(
@@ -200,6 +263,7 @@ export function calculateBidRecommendation(
     ? 'Потому что ' + reasons.join('; ') + '.'
     : 'Изменения не требуются.';
   const needsConfirm = diff > 15;
+  const { decision } = previewDecision(item.views, item.contacts, item.spend, item.spend > 0);
 
   return {
     itemId: item.id,
@@ -210,6 +274,7 @@ export function calculateBidRecommendation(
     reasons,
     priority,
     confidence,
+    decision,
     forecastSpend,
     forecastContacts,
     forecastSpendDelta,
@@ -288,6 +353,53 @@ export function buildRecommendations(
         kpi.targetLeads - stats.totalContacts
       )} лидов до конца периода.`,
       actionLabel: 'Масштабировать',
+      status: 'new',
+    });
+  }
+
+  // ─── Lead Leakage (на основе соотношения избранное/контакты)
+  // Если объявление часто добавляют в избранное, но мало пишут — это не утечка
+  // лидов в нашем смысле, но это сигнал, что контакт не происходит после интереса
+  // (см. business-scenarios.md → "Lead Leakage").
+  const leakage = items.filter(
+    (i) =>
+      i.status === 'active' &&
+      i.favorites > 10 &&
+      i.contacts > 0 &&
+      i.favorites / Math.max(1, i.contacts) > 5
+  );
+  if (leakage.length > 0) {
+    out.push({
+      id: id(),
+      priority: 'medium',
+      type: 'content',
+      group: 'Lead Leakage',
+      title: `Утечка интереса в ${leakage.length} объявлениях`,
+      description:
+        'Объявления часто сохраняют в избранное, но звонят и пишут редко. Это сигнал, что цена или условия выглядят непривлекательно вблизи. Проверьте цену, описание условий, скорость ответа на чаты и доступность связи.',
+      expectedEffect: 'Рост конверсии из избранного в контакт.',
+      actionLabel: 'Посмотреть объявления',
+      status: 'new',
+    });
+  }
+
+  // ─── Stale inventory (старые объявления без активности)
+  const now = Date.now();
+  const stale = items.filter((i) => {
+    const age = (now - new Date(i.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+    return i.status === 'active' && age > 60 && i.contacts < 3;
+  });
+  if (stale.length > 0) {
+    out.push({
+      id: id(),
+      priority: 'low',
+      type: 'content',
+      group: 'Освежить старые объявления',
+      title: `${stale.length} объявлений старше 60 дней без откликов`,
+      description:
+        'По правилам avito-skill: stale inventory нуждается в проверке цены, контента, категории, остатков или доступности до того, как добавлять платное продвижение.',
+      expectedEffect: 'Возврат ранжирования и интереса к объявлениям.',
+      actionLabel: 'Открыть список',
       status: 'new',
     });
   }

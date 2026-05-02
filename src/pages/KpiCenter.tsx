@@ -38,7 +38,7 @@ export default function KpiCenter() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <Section title="Целевые показатели по лидам">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Целевая цена лида (₽)">
                 <input
                   type="number"
@@ -84,7 +84,7 @@ export default function KpiCenter() {
           </Section>
 
           <Section title="Бюджет">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <Field label="Дневной бюджет, ₽">
                 <input
                   type="number"

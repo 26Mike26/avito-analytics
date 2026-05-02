@@ -30,11 +30,13 @@ export function AccountSwitcher() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-2 bg-ink-850 hover:bg-ink-800 border border-ink-700 hover:border-accent/40 rounded-full px-3 h-9 text-sm transition"
+        className="inline-flex items-center gap-1.5 sm:gap-2 bg-ink-850 hover:bg-ink-800 border border-ink-700 hover:border-accent/40 rounded-full px-2 sm:px-3 h-10 sm:h-9 text-sm transition"
       >
         <span className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" />
-        <div className="text-ink-400 text-[11px] uppercase tracking-wider">Аккаунт:</div>
-        <div className="text-white font-semibold truncate max-w-[140px]">
+        <div className="hidden md:block text-ink-400 text-[11px] uppercase tracking-wider">
+          Аккаунт:
+        </div>
+        <div className="text-white font-semibold truncate max-w-[80px] sm:max-w-[140px]">
           {current?.name ?? 'Не выбран'}
         </div>
         <ChevronDown className="w-4 h-4 text-ink-400" />

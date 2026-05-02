@@ -104,7 +104,7 @@ export default function Settings() {
               <Plug className="w-4 h-4 text-accent" />
               <h2 className="font-semibold text-white">Режим работы</h2>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {(['demo', 'api', 'csv'] as IntegrationMode[]).map((m) => (
                 <button
                   key={m}
@@ -150,7 +150,7 @@ export default function Settings() {
               (CORS и риск утечки секретов) — нужен серверный прокси (см. папку{' '}
               <code>backend/</code> в проекте).
             </p>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Client ID">
                 <input
                   className="input"

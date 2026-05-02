@@ -212,8 +212,8 @@ export default function Bids() {
       </div>
 
       {confirmOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-30 p-4">
-          <div className="card p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-30 p-4">
+          <div className="card p-5 sm:p-6 max-w-md w-full">
             <h2 className="font-semibold text-white text-lg">
               Применить все рекомендации?
             </h2>

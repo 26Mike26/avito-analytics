@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useStore } from '../store/useStore';
@@ -12,16 +12,24 @@ type Props = {
 export function Layout({ children, title, subtitle }: Props) {
   const init = useStore((s) => s.init);
   const initialized = useStore((s) => s.initialized);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   useEffect(() => {
     if (!initialized) init();
   }, [init, initialized]);
 
   return (
     <div className="min-h-screen flex bg-ink-900 text-ink-100 silk-bg">
-      <Sidebar />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 min-w-0 flex flex-col relative">
-        <Header title={title} subtitle={subtitle} />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <Header
+          title={title}
+          subtitle={subtitle}
+          onMenuClick={() => setSidebarOpen(true)}
+        />
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+          {children}
+        </main>
       </div>
     </div>
   );

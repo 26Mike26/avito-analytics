@@ -93,7 +93,7 @@ body {
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-0;
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2.5 sm:py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-0 min-h-[40px];
   }
   .btn-primary {
     @apply btn bg-accent text-white hover:bg-accent-400 focus:ring-accent/40;
@@ -110,7 +110,7 @@ body {
   }
 
   .input {
-    @apply w-full rounded-xl border border-ink-700 bg-ink-850 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60;
+    @apply w-full rounded-xl border border-ink-700 bg-ink-850 px-3 py-2.5 sm:py-2 text-base sm:text-sm text-ink-100 placeholder:text-ink-500 focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent/60 min-h-[44px] sm:min-h-0;
   }
   select.input {
     color-scheme: dark;
@@ -136,10 +136,10 @@ body {
 
   /* Стиль pill-навигации в шапке (как у Genesis) */
   .pill-nav {
-    @apply inline-flex items-center gap-1 bg-ink-850 border border-ink-700 rounded-full p-1;
+    @apply inline-flex flex-wrap items-center gap-1 bg-ink-850 border border-ink-700 rounded-2xl sm:rounded-full p-1;
   }
   .pill-nav-item {
-    @apply inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-full text-ink-300 transition;
+    @apply inline-flex items-center gap-2 px-3 py-2 sm:py-1.5 text-sm rounded-full text-ink-300 transition;
   }
   .pill-nav-item.active {
     @apply bg-ink-800 text-white shadow-inner;

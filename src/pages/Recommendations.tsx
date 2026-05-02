@@ -107,7 +107,7 @@ export default function Recommendations() {
                   <div
                     key={r.id}
                     className={[
-                      'card p-4 flex items-start gap-4',
+                      'card p-4 flex flex-col md:flex-row md:items-start gap-3 md:gap-4',
                       r.status === 'accepted'
                         ? 'opacity-60'
                         : r.status === 'declined'
@@ -129,7 +129,7 @@ export default function Recommendations() {
                         Ожидаемый эффект: {r.expectedEffect}
                       </div>
                     </div>
-                    <div className="shrink-0 flex flex-col items-end gap-2">
+                    <div className="md:shrink-0 flex flex-col md:items-end gap-2">
                       {r.itemId && (
                         <Link
                           to={`/items/${r.itemId}`}
@@ -138,7 +138,7 @@ export default function Recommendations() {
                           Открыть объявление →
                         </Link>
                       )}
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
                           className="btn-secondary"
                           disabled={r.status !== 'new'}

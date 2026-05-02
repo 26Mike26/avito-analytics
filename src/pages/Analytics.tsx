@@ -108,7 +108,7 @@ export default function Analytics() {
       title="Аналитика"
       subtitle="Графики и сравнение по объявлениям, категориям и регионам"
     >
-      <div className="card p-4 mb-4 grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="card p-3 sm:p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
         <select className="input" value={period} onChange={(e) => setPeriod(e.target.value as '7' | '14' | '30')}>
           <option value="7">7 дней</option>
           <option value="14">14 дней</option>
