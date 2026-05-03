@@ -106,6 +106,59 @@ export type CategoryStats = {
   medianConversion: number | null;
 };
 
+/**
+ * Категории, в которых есть несколько эффективных объявлений (CPL ≤ цели).
+ * Используется для рекомендаций расширения ассортимента.
+ */
+function categoryWinners(
+  items: AvitoItem[],
+  kpi: AccountKpi
+): Array<{ category: string; winners: number; medianCpl: number | null }> {
+  const groups = new Map<string, { items: AvitoItem[]; cpls: number[] }>();
+  for (const it of items) {
+    if (it.status !== 'active') continue;
+    const cpl = calcCpl(it.spend, it.contacts);
+    const g = groups.get(it.category) ?? { items: [], cpls: [] };
+    g.items.push(it);
+    if (cpl != null) g.cpls.push(cpl);
+    groups.set(it.category, g);
+  }
+  const out: Array<{ category: string; winners: number; medianCpl: number | null }> = [];
+  for (const [cat, g] of groups.entries()) {
+    const winners = g.items.filter((i) => {
+      const cpl = calcCpl(i.spend, i.contacts);
+      return cpl != null && cpl <= kpi.targetCpl && i.contacts >= 3;
+    }).length;
+    if (winners >= 2) {
+      out.push({ category: cat, winners, medianCpl: median(g.cpls) });
+    }
+  }
+  return out.sort((a, b) => b.winners - a.winners);
+}
+
+/**
+ * Регионы с минимальным присутствием — потенциальные кандидаты на расширение.
+ * Берём «соседей» рядом с уже активными регионами по простому списку.
+ */
+function regionExpansionCandidates(items: AvitoItem[], _kpi: AccountKpi): string[] {
+  void _kpi;
+  const presentRegions = new Set(
+    items.filter((i) => i.status === 'active').map((i) => i.region)
+  );
+  const candidatePool = [
+    'Москва',
+    'Санкт-Петербург',
+    'Екатеринбург',
+    'Казань',
+    'Новосибирск',
+    'Краснодар',
+    'Нижний Новгород',
+    'Самара',
+    'Ростов-на-Дону',
+  ];
+  return candidatePool.filter((r) => !presentRegions.has(r)).slice(0, 5);
+}
+
 function computeCategoryStats(items: AvitoItem[]): Map<string, CategoryStats> {
   const groups = new Map<string, { cpls: number[]; convs: number[] }>();
   for (const it of items) {
@@ -404,6 +457,86 @@ export function buildRecommendations(
     });
   }
 
+  // ─── Scaling: масштабирование и расширение
+  // Когда есть стабильно эффективные объявления (CPL ниже цели, контактов ≥ 5,
+  // тренд вверх), и при этом бюджет ещё не выбран — это сигнал к масштабированию.
+  // Источник правил: avito-skill `business-scenarios.md` → "Scale Winners".
+  const scalable = items.filter((i) => {
+    if (i.status !== 'active') return false;
+    const cpl = calcCpl(i.spend, i.contacts);
+    if (cpl == null) return false;
+    return cpl <= kpi.targetCpl && i.contacts >= 5;
+  });
+  const budgetHeadroom = Math.max(0, kpi.monthlyBudget - stats.totalSpend);
+  const budgetHeadroomPercent =
+    kpi.monthlyBudget > 0 ? (budgetHeadroom / kpi.monthlyBudget) * 100 : 0;
+
+  if (scalable.length > 0 && budgetHeadroomPercent >= 15) {
+    const trimmed = scalable.slice(0, 5);
+    const namesPreview = trimmed
+      .map((i) => `«${i.title}»`)
+      .join(', ');
+    const expectedExtraLeads = Math.round(
+      trimmed.reduce(
+        (acc, i) => acc + (i.contacts > 0 ? Math.min(i.contacts * 0.3, 8) : 0),
+        0
+      )
+    );
+    out.push({
+      id: id(),
+      priority: 'medium',
+      type: 'budget',
+      group: 'Масштабирование',
+      title: `Можно масштабировать ${scalable.length} прибыльных объявлений`,
+      description: `У этих объявлений CPL уже ниже цели и стабильный поток обращений: ${namesPreview}${
+        scalable.length > trimmed.length ? ' и др.' : ''
+      }. Свободный месячный бюджет — ${formatRub(budgetHeadroom)} (${formatPercent(
+        budgetHeadroomPercent,
+        0
+      )}). Поднимите ставку шагами по 10–15% и/или подключите услуги продвижения.`,
+      expectedEffect: `Прогноз: +${expectedExtraLeads} лидов в текущем периоде без выхода за бюджет.`,
+      actionLabel: 'Посмотреть кандидатов',
+      status: 'new',
+    });
+  }
+
+  // ─── Расширение: гео и категории
+  // Если в одной категории/регионе есть «победители», а в смежных нет покрытия —
+  // предложим протестировать расширение ассортимента.
+  const cats = categoryWinners(items, kpi);
+  if (cats.length > 0 && budgetHeadroomPercent >= 20) {
+    out.push({
+      id: id(),
+      priority: 'low',
+      type: 'content',
+      group: 'Масштабирование',
+      title: `Расширьте ассортимент в категории «${cats[0].category}»`,
+      description: `В этой категории ${cats[0].winners} объявлений работают в плюс при медиане CPL ${formatRub(
+        cats[0].medianCpl ?? 0
+      )}. Запустите ещё ${Math.min(3, cats[0].winners)} похожих объявления — это самый дешёвый рост.`,
+      expectedEffect: 'Увеличение пула лидов без вложения в более дорогие сегменты.',
+      actionLabel: 'Открыть категорию',
+      status: 'new',
+    });
+  }
+
+  // ─── Региональное расширение
+  const regionsToExpand = regionExpansionCandidates(items, kpi);
+  if (regionsToExpand.length > 0 && budgetHeadroomPercent >= 15) {
+    out.push({
+      id: id(),
+      priority: 'low',
+      type: 'account',
+      group: 'Масштабирование',
+      title: `Протестируйте новые регионы: ${regionsToExpand.slice(0, 2).join(', ')}`,
+      description:
+        'В этих регионах у вас почти нет активных объявлений, при этом в основных регионах CPL стабильно ниже цели. Безопасный тест: 1–2 объявления на низкой ставке, бюджет ≤ 10% от месячного.',
+      expectedEffect: 'Диверсификация источников лидов и снижение зависимости от одного региона.',
+      actionLabel: 'Открыть аналитику регионов',
+      status: 'new',
+    });
+  }
+
   // По объявлениям
   for (const item of items) {
     if (item.status !== 'active') continue;
@@ -431,7 +564,7 @@ export function buildRecommendations(
         itemId: item.id,
         priority: 'medium',
         type: 'bid',
-        group: 'Масштабировать эффективные объявления',
+        group: 'Масштабирование',
         title: `«${item.title}»: повысить ставку на ${bid.diffPercent}%`,
         description: bid.reason,
         expectedEffect: `Прогноз: расход ~${formatRub(bid.forecastSpend)}, лидов ~${bid.forecastContacts}.`,

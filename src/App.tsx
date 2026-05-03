@@ -11,6 +11,8 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Accounts from './pages/Accounts';
 import ActionLog from './pages/ActionLog';
+import Compare from './pages/Compare';
+import Insights from './pages/Insights';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 export default function App() {
@@ -71,6 +73,22 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Analytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/compare"
+        element={
+          <ProtectedRoute>
+            <Compare />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/insights"
+        element={
+          <ProtectedRoute>
+            <Insights />
           </ProtectedRoute>
         }
       />

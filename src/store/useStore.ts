@@ -3,6 +3,7 @@ import type {
   AccountData,
   AccountKpi,
   ActionLogEntry,
+  ActionSource,
   ActionType,
   AvitoItem,
   BidHistoryEntry,
@@ -167,8 +168,10 @@ type Store = {
     type: ActionType,
     title: string,
     details?: string,
-    extras?: { before?: unknown; after?: unknown }
+    extras?: { before?: unknown; after?: unknown; source?: ActionSource }
   ) => void;
+  /** Добавить готовые события Авито в журнал (используется при синхронизации). */
+  ingestAvitoEvents: (events: Omit<ActionLogEntry, 'id' | 'userId' | 'source'>[]) => void;
   clearLog: () => void;
 };
 
@@ -733,6 +736,13 @@ export const useStore = create<Store>((set, get) => {
       set({ loading: true });
       const items = await adapter.fetchItems();
       const metrics = await adapter.fetchMetrics(items);
+      // Подтягиваем «события из Авито» (история операций, входящие сообщения и т.п.)
+      try {
+        const events = await adapter.fetchAvitoEvents();
+        if (events.length > 0) get().ingestAvitoEvents(events);
+      } catch (e) {
+        console.warn('[adapter] fetchAvitoEvents failed:', e);
+      }
       const accs = { ...get().accounts };
       const acc = accs[id];
       const itemsWithRec = applyBidRecommendationsToItems(items, acc.kpi, metrics);
@@ -877,6 +887,9 @@ export const useStore = create<Store>((set, get) => {
         userId,
         accountId,
         type,
+        // По умолчанию все действия из стора — действия пользователя на нашей платформе.
+        // События из Авито пишутся через ingestAvitoEvents.
+        source: extras?.source ?? 'platform',
         title,
         details,
         before: extras?.before,
@@ -889,6 +902,42 @@ export const useStore = create<Store>((set, get) => {
         void repository.saveActionLog(entry).catch(() => {
           // RLS отклонит, если userId не совпадает с auth.uid() — не падаем
         });
+      }
+    },
+
+    ingestAvitoEvents: (events) => {
+      const userId = get().currentUser?.id ?? 'anonymous';
+      const accountId = get().currentAccountId ?? undefined;
+      // Дедупликация: один и тот же type+title+timestamp не добавляем повторно.
+      const existing = new Set(
+        get().actionLog
+          .filter((e) => e.source === 'avito')
+          .map((e) => `${e.type}|${e.title}|${e.timestamp}`)
+      );
+      const fresh: ActionLogEntry[] = events
+        .map((ev) => ({
+          id: genUuid(),
+          timestamp: ev.timestamp,
+          userId,
+          accountId: ev.accountId ?? accountId,
+          type: ev.type,
+          source: 'avito' as const,
+          title: ev.title,
+          details: ev.details,
+          before: ev.before,
+          after: ev.after,
+        }))
+        .filter((e) => !existing.has(`${e.type}|${e.title}|${e.timestamp}`));
+      if (fresh.length === 0) return;
+      const next = [...fresh, ...get().actionLog].sort((a, b) =>
+        b.timestamp.localeCompare(a.timestamp)
+      );
+      saveLog(next);
+      set({ actionLog: next });
+      if (userId !== 'anonymous') {
+        for (const e of fresh) {
+          void repository.saveActionLog(e).catch(() => {});
+        }
       }
     },
 

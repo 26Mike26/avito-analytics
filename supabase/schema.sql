@@ -80,6 +80,8 @@ create table if not exists public.action_log (
   user_id uuid not null references auth.users(id) on delete cascade,
   account_id uuid references public.accounts(id) on delete set null,
   type text not null,
+  source text not null default 'platform'
+    check (source in ('platform','avito')),
   title text not null,
   details text,
   before jsonb,
@@ -88,6 +90,12 @@ create table if not exists public.action_log (
 );
 create index if not exists action_log_user_idx
   on public.action_log(user_id, created_at desc);
+
+-- ─── Миграция для существующих БД (можно прогонять повторно) ───
+-- Если таблица уже создана без поля source, добавим колонку без падения.
+alter table public.action_log
+  add column if not exists source text not null default 'platform'
+  check (source in ('platform','avito'));
 
 -- ─────────────────────────── RLS ─────────────────────────────
 

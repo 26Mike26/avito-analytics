@@ -9,6 +9,8 @@ import {
   Settings,
   Users,
   History,
+  GitCompare,
+  Sparkles,
   X,
 } from 'lucide-react';
 
@@ -19,6 +21,8 @@ const items = [
   { to: '/bids', icon: TrendingUp, label: 'Управление ставками' },
   { to: '/recommendations', icon: Lightbulb, label: 'Рекомендации' },
   { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
+  { to: '/compare', icon: GitCompare, label: 'Сравнение периодов' },
+  { to: '/insights', icon: Sparkles, label: 'Инсайты по объявлениям' },
   { to: '/accounts', icon: Users, label: 'Аккаунты' },
   { to: '/log', icon: History, label: 'Журнал действий' },
   { to: '/settings', icon: Settings, label: 'Настройки' },

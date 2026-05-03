@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Download, History, Trash2 } from 'lucide-react';
+import { Download, RefreshCw, Trash2 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
 import { Empty } from '../components/Empty';
 import { useStore } from '../store/useStore';
-import type { ActionLogEntry, ActionType } from '../types';
+import type { ActionLogEntry, ActionSource, ActionType } from '../types';
 
 const TYPE_LABELS: Record<ActionType, string> = {
+  // ─── действия на нашей платформе
   login: 'Вход',
   logout: 'Выход',
   signup: 'Регистрация',
@@ -25,6 +26,18 @@ const TYPE_LABELS: Record<ActionType, string> = {
   item_note_set: 'Заметка',
   data_reloaded: 'Синхронизация',
   reset_to_demo: 'Сброс к демо',
+  // ─── события из Авито
+  avito_item_published: 'Объявление опубликовано',
+  avito_item_archived: 'Объявление снято',
+  avito_item_edited: 'Объявление отредактировано',
+  avito_promotion_applied: 'Продвижение активировано',
+  avito_promotion_stopped: 'Продвижение остановлено',
+  avito_balance_topup: 'Пополнение баланса',
+  avito_balance_charge: 'Списание баланса',
+  avito_message_received: 'Сообщение в чат',
+  avito_call_received: 'Входящий звонок',
+  avito_review_received: 'Новый отзыв',
+  avito_other: 'Прочее (Авито)',
 };
 
 const TYPE_TONES: Partial<Record<ActionType, 'green' | 'red' | 'amber' | 'blue' | 'gray' | 'violet'>> =
@@ -47,21 +60,50 @@ const TYPE_TONES: Partial<Record<ActionType, 'green' | 'red' | 'amber' | 'blue' 
     item_note_set: 'gray',
     data_reloaded: 'blue',
     reset_to_demo: 'amber',
+    avito_item_published: 'green',
+    avito_item_archived: 'gray',
+    avito_item_edited: 'blue',
+    avito_promotion_applied: 'violet',
+    avito_promotion_stopped: 'gray',
+    avito_balance_topup: 'green',
+    avito_balance_charge: 'amber',
+    avito_message_received: 'blue',
+    avito_call_received: 'blue',
+    avito_review_received: 'green',
+    avito_other: 'gray',
   };
+
+const SOURCE_LABELS: Record<ActionSource, string> = {
+  platform: 'Платформа',
+  avito: 'Авито',
+};
 
 export default function ActionLog() {
   const log = useStore((s) => s.actionLog);
   const accounts = useStore((s) => s.accounts);
   const currentId = useStore((s) => s.currentAccountId);
   const clearLog = useStore((s) => s.clearLog);
+  const reloadFromAdapter = useStore((s) => s.reloadFromAdapter);
+  const loading = useStore((s) => s.loading);
 
   const [accountFilter, setAccountFilter] = useState<string>(currentId ?? 'all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | ActionSource>('all');
   const [search, setSearch] = useState('');
 
   const types = useMemo(() => Array.from(new Set(log.map((l) => l.type))), [log]);
+  const counts = useMemo(() => {
+    let platform = 0;
+    let avito = 0;
+    for (const e of log) {
+      if (e.source === 'avito') avito++;
+      else platform++;
+    }
+    return { platform, avito };
+  }, [log]);
 
   const filtered = log.filter((l) => {
+    if (sourceFilter !== 'all' && l.source !== sourceFilter) return false;
     if (accountFilter !== 'all' && l.accountId !== accountFilter) return false;
     if (typeFilter !== 'all' && l.type !== typeFilter) return false;
     if (
@@ -74,9 +116,10 @@ export default function ActionLog() {
   });
 
   const exportCsv = () => {
-    const headers = ['timestamp', 'type', 'account', 'title', 'details'];
+    const headers = ['timestamp', 'source', 'type', 'account', 'title', 'details'];
     const rows = filtered.map((l) => [
       l.timestamp,
+      l.source,
       l.type,
       l.accountId ? accounts[l.accountId]?.name ?? l.accountId : '',
       l.title.replace(/"/g, '""'),
@@ -97,8 +140,62 @@ export default function ActionLog() {
   return (
     <Layout
       title="Журнал действий"
-      subtitle="Все изменения, которые делали в этом профиле — для аудита и контроля"
+      subtitle="Все изменения, разделённые на действия на платформе и события в самом Авито"
     >
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <button
+          onClick={() => setSourceFilter('all')}
+          className={[
+            'card p-4 text-left transition',
+            sourceFilter === 'all' ? 'ring-2 ring-accent' : '',
+          ].join(' ')}
+        >
+          <div className="text-xs uppercase tracking-wider text-ink-400">
+            Всего
+          </div>
+          <div className="text-2xl font-extrabold text-white mt-1">
+            {log.length}
+          </div>
+          <div className="text-[11px] text-ink-500 mt-1">
+            события из всех источников
+          </div>
+        </button>
+        <button
+          onClick={() => setSourceFilter('platform')}
+          className={[
+            'card p-4 text-left transition',
+            sourceFilter === 'platform' ? 'ring-2 ring-accent' : '',
+          ].join(' ')}
+        >
+          <div className="text-xs uppercase tracking-wider text-ink-400">
+            Платформа
+          </div>
+          <div className="text-2xl font-extrabold text-white mt-1">
+            {counts.platform}
+          </div>
+          <div className="text-[11px] text-ink-500 mt-1">
+            действия пользователей внутри сервиса
+          </div>
+        </button>
+        <button
+          onClick={() => setSourceFilter('avito')}
+          className={[
+            'card p-4 text-left transition',
+            sourceFilter === 'avito' ? 'ring-2 ring-accent' : '',
+          ].join(' ')}
+        >
+          <div className="text-xs uppercase tracking-wider text-ink-400">
+            Авито
+          </div>
+          <div className="text-2xl font-extrabold text-white mt-1">
+            {counts.avito}
+          </div>
+          <div className="text-[11px] text-ink-500 mt-1">
+            события из аккаунта Авито (через API)
+          </div>
+        </button>
+      </div>
+
       <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
         <select
           className="input w-auto"
@@ -120,7 +217,7 @@ export default function ActionLog() {
           <option value="all">Любой тип</option>
           {types.map((t) => (
             <option key={t} value={t}>
-              {TYPE_LABELS[t]}
+              {TYPE_LABELS[t] ?? t}
             </option>
           ))}
         </select>
@@ -130,7 +227,16 @@ export default function ActionLog() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <button
+            className="btn-secondary"
+            onClick={() => reloadFromAdapter()}
+            disabled={loading}
+            title="Подтянуть события из Авито (история операций, чаты, звонки)"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Подтянуть из Авито
+          </button>
           <button className="btn-secondary" onClick={exportCsv}>
             <Download className="w-4 h-4" /> Экспорт CSV
           </button>
@@ -148,7 +254,11 @@ export default function ActionLog() {
       {filtered.length === 0 ? (
         <Empty
           title="Записей нет"
-          hint="Здесь появятся все действия — изменения KPI, ставок, импорты и переключения."
+          hint={
+            sourceFilter === 'avito'
+              ? 'Подключите аккаунт Авито или нажмите «Подтянуть из Авито» — здесь появятся пополнения баланса, входящие чаты и изменения объявлений.'
+              : 'Здесь появятся все действия — изменения KPI, ставок, импорты и переключения.'
+          }
         />
       ) : (
         <div className="card overflow-hidden">
@@ -157,6 +267,7 @@ export default function ActionLog() {
               <thead>
                 <tr>
                   <th className="table-th">Дата и время</th>
+                  <th className="table-th">Источник</th>
                   <th className="table-th">Тип</th>
                   <th className="table-th">Аккаунт</th>
                   <th className="table-th">Описание</th>
@@ -165,7 +276,13 @@ export default function ActionLog() {
               </thead>
               <tbody>
                 {filtered.map((entry) => (
-                  <LogRow key={entry.id} entry={entry} accountName={entry.accountId ? accounts[entry.accountId]?.name ?? '—' : '—'} />
+                  <LogRow
+                    key={entry.id}
+                    entry={entry}
+                    accountName={
+                      entry.accountId ? accounts[entry.accountId]?.name ?? '—' : '—'
+                    }
+                  />
                 ))}
               </tbody>
             </table>
@@ -178,10 +295,14 @@ export default function ActionLog() {
 
 function LogRow({ entry, accountName }: { entry: ActionLogEntry; accountName: string }) {
   const tone = TYPE_TONES[entry.type] ?? 'gray';
+  const sourceTone: 'violet' | 'blue' = entry.source === 'avito' ? 'violet' : 'blue';
   return (
     <tr className="table-row align-top">
       <td className="table-td whitespace-nowrap text-ink-400">
         {new Date(entry.timestamp).toLocaleString('ru-RU')}
+      </td>
+      <td className="table-td whitespace-nowrap">
+        <Badge tone={sourceTone}>{SOURCE_LABELS[entry.source]}</Badge>
       </td>
       <td className="table-td">
         <Badge tone={tone}>{TYPE_LABELS[entry.type] ?? entry.type}</Badge>

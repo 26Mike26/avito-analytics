@@ -133,7 +133,28 @@ export type ActionType =
   | 'integration_updated'
   | 'item_note_set'
   | 'data_reloaded'
-  | 'reset_to_demo';
+  | 'reset_to_demo'
+  // ─── события, прилетающие из самого Авито (через API) ───
+  | 'avito_item_published'
+  | 'avito_item_archived'
+  | 'avito_item_edited'
+  | 'avito_promotion_applied'
+  | 'avito_promotion_stopped'
+  | 'avito_balance_topup'
+  | 'avito_balance_charge'
+  | 'avito_message_received'
+  | 'avito_call_received'
+  | 'avito_review_received'
+  | 'avito_other';
+
+/**
+ * Источник события в журнале.
+ * - `platform` — действие пользователя на нашей платформе (наш UI и кнопки)
+ * - `avito`   — событие, произошедшее в самом аккаунте Авито
+ *               (получено через API: пополнение баланса, ответ продавца,
+ *               снятие объявления и т.д.)
+ */
+export type ActionSource = 'platform' | 'avito';
 
 export type ActionLogEntry = {
   id: string;
@@ -141,6 +162,7 @@ export type ActionLogEntry = {
   userId: string;
   accountId?: string;
   type: ActionType;
+  source: ActionSource;
   title: string;
   details?: string;
   before?: unknown;

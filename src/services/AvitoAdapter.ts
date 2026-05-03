@@ -1,4 +1,5 @@
 import type {
+  ActionLogEntry,
   AvitoItem,
   IntegrationSettings,
   ItemMetrics,
@@ -8,6 +9,12 @@ import {
   generateMockItems,
 } from '../data/mock';
 import { parseCsvImport, type CsvImportResult } from '../lib/csvImport';
+
+/** Событие из самого Авито (оригинал без id/userId/source). */
+export type AvitoExternalEvent = Omit<
+  ActionLogEntry,
+  'id' | 'userId' | 'source'
+>;
 
 /**
  * Слой интеграции с Avito API.
@@ -25,6 +32,16 @@ export interface IAvitoAdapter {
   updateBid(itemId: string, newBid: number): Promise<void>;
   testConnection(): Promise<{ ok: boolean; message: string }>;
   importCsv(text: string): Promise<CsvImportResult>;
+  /**
+   * Подтянуть журнал событий, произошедших в самом аккаунте Авито
+   * (история операций баланса, изменения статуса объявлений, входящие
+   * сообщения и т.п.). В демо-режиме возвращаем сгенерированный список,
+   * чтобы у пользователя было что посмотреть.
+   */
+  fetchAvitoEvents(opts?: {
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<AvitoExternalEvent[]>;
 }
 
 export class AvitoAdapter implements IAvitoAdapter {
@@ -100,5 +117,84 @@ export class AvitoAdapter implements IAvitoAdapter {
 
   async importCsv(text: string): Promise<CsvImportResult> {
     return parseCsvImport(text);
+  }
+
+  /**
+   * Демо-генератор событий «как из Авито».
+   * При боевом режиме сюда нужно подтянуть реальные источники:
+   *   • POST /core/v1/accounts/operations_history/  — операции баланса
+   *   • GET  /messenger/v2/accounts/{id}/chats?unread_only=true
+   *   • GET  /core/v1/accounts/{id}/calls/stats
+   *   • GET  /core/v1/items?status=...  — сравнение со снапшотом для diff
+   * см. _api-ref/references/sections/{user,messenger,calltracking}.md
+   */
+  async fetchAvitoEvents(opts?: {
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<AvitoExternalEvent[]> {
+    if (this.settings.mode === 'api') {
+      // TODO: подключить реальный API через backend-прокси
+      console.warn(
+        '[AvitoAdapter] fetchAvitoEvents: API не подключён, возвращаем демо.'
+      );
+    }
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const events: AvitoExternalEvent[] = [];
+    const samples: Array<{
+      type: AvitoExternalEvent['type'];
+      title: string;
+      details?: string;
+    }> = [
+      {
+        type: 'avito_balance_topup',
+        title: 'Пополнение баланса Авито',
+        details: 'Сумма: 15 000 ₽',
+      },
+      {
+        type: 'avito_balance_charge',
+        title: 'Списание за продвижение',
+        details: 'Объявление поднято в выдаче: «Аренда квартиры на сутки»',
+      },
+      {
+        type: 'avito_message_received',
+        title: 'Новое сообщение от покупателя',
+        details: 'Чат: «Студия в центре, 35 м²»',
+      },
+      {
+        type: 'avito_call_received',
+        title: 'Входящий звонок по объявлению',
+        details: 'Объявление: «3-комн. 75 м² в Восточном»',
+      },
+      {
+        type: 'avito_item_published',
+        title: 'Объявление опубликовано',
+        details: 'Изменение статуса: pending → active',
+      },
+      {
+        type: 'avito_item_archived',
+        title: 'Объявление снято с публикации',
+        details: 'Снято автоматически по сроку',
+      },
+      {
+        type: 'avito_promotion_applied',
+        title: 'Активирована услуга продвижения',
+        details: 'Тариф: «XL объявление на 7 дней»',
+      },
+      {
+        type: 'avito_review_received',
+        title: 'Получен новый отзыв',
+        details: 'Оценка 5/5, текст без замечаний',
+      },
+    ];
+    const from = opts?.dateFrom ? Date.parse(opts.dateFrom) : now - 14 * dayMs;
+    const to = opts?.dateTo ? Date.parse(opts.dateTo) : now;
+    const span = Math.max(dayMs, to - from);
+    for (let i = 0; i < 14; i++) {
+      const sample = samples[i % samples.length];
+      const ts = new Date(from + Math.random() * span).toISOString();
+      events.push({ ...sample, timestamp: ts });
+    }
+    return events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 }
