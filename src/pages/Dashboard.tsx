@@ -1,10 +1,14 @@
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   CheckCircle2,
+  Coins,
   Eye,
+  Gift,
   Heart,
   Phone,
+  PiggyBank,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -13,6 +17,7 @@ import { Layout } from '../components/Layout';
 import { KpiCard } from '../components/KpiCard';
 import { ProgressBar } from '../components/ProgressBar';
 import { Badge, PriorityBadge } from '../components/Badge';
+import { PeriodPicker } from '../components/PeriodPicker';
 import { useStore } from '../store/useStore';
 import {
   calculateAccountStats,
@@ -21,12 +26,24 @@ import {
   formatPercent,
   formatRub,
   calcCpl,
+  itemsInDateRange,
+  lastNDaysRange,
 } from '../lib/analytics';
 
 export default function Dashboard() {
-  const items = useStore((s) => s.items);
+  const allItems = useStore((s) => s.items);
+  const metrics = useStore((s) => s.metrics);
   const kpi = useStore((s) => s.kpi);
   const recommendations = useStore((s) => s.recommendations);
+  const balance = useStore((s) => s.balance);
+
+  const [period, setPeriod] = useState(() => lastNDaysRange(30));
+
+  // Items с реальными суммами за выбранный период
+  const items = useMemo(
+    () => itemsInDateRange(allItems, metrics, period.from, period.to),
+    [allItems, metrics, period.from, period.to]
+  );
   const stats = calculateAccountStats(items, kpi);
 
   const sortedByEfficiency = [...items]
@@ -46,16 +63,60 @@ export default function Dashboard() {
     .filter((r) => r.status === 'new')
     .slice(0, 6);
 
+  const balanceTotal = balance ? balance.real + balance.bonus : null;
+
   return (
     <Layout
       title="Дашборд аккаунта"
-      subtitle="Сводка по эффективности продвижения и выполнению KPI"
+      subtitle={`Сводка за период ${period.from} — ${period.to}`}
     >
+      {/* ─── Выбор периода ─── */}
+      <div className="card p-3 sm:p-4 mb-4">
+        <PeriodPicker value={period} onChange={setPeriod} />
+      </div>
+
+      {/* ─── Баланс кошелька (только если режим API и баланс получен) ─── */}
+      {balance && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+          <BalanceCard
+            label="Реальный баланс"
+            icon={<Wallet className="w-4 h-4" />}
+            value={formatRub(balance.real)}
+            hint="Доступные деньги на счёте"
+            tone="white"
+          />
+          <BalanceCard
+            label="Бонусные средства"
+            icon={<Gift className="w-4 h-4" />}
+            value={formatRub(balance.bonus)}
+            hint="Промо-баллы / бонусы"
+            tone="violet"
+          />
+          <BalanceCard
+            label="CPA-аванс"
+            icon={<PiggyBank className="w-4 h-4" />}
+            value={formatRub(balance.advance)}
+            hint="Зарезервировано под целевые действия"
+            tone="orange"
+          />
+          {balanceTotal != null && (
+            <div className="sm:col-span-3 text-xs text-ink-400 -mt-1">
+              Всего на аккаунте:{' '}
+              <span className="text-white font-semibold">
+                {formatRub(balanceTotal + balance.advance)}
+              </span>
+              {' · '}
+              обновлено {new Date(balance.fetchedAt).toLocaleString('ru-RU')}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="Расход"
           value={formatRub(stats.totalSpend)}
-          icon={Wallet}
+          icon={Coins}
           hint={`${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`}
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />
@@ -352,4 +413,35 @@ function groupLabel(t: string) {
     default:
       return 'Аккаунт';
   }
+}
+
+function BalanceCard({
+  label,
+  icon,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  hint: string;
+  tone: 'white' | 'violet' | 'orange';
+}) {
+  const accent =
+    tone === 'orange'
+      ? 'text-accent border-accent/30 bg-accent/5'
+      : tone === 'violet'
+      ? 'text-violet-300 border-violet-500/30 bg-violet-500/5'
+      : 'text-white border-ink-700 bg-ink-850';
+  return (
+    <div className={`card border ${accent} p-4`}>
+      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-ink-400">
+        <span className={tone === 'white' ? 'text-ink-300' : ''}>{icon}</span>
+        {label}
+      </div>
+      <div className="text-2xl font-extrabold mt-2">{value}</div>
+      <div className="text-xs text-ink-400 mt-1">{hint}</div>
+    </div>
+  );
 }

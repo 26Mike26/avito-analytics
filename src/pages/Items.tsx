@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge, StatusBadge } from '../components/Badge';
+import { PeriodPicker } from '../components/PeriodPicker';
 import { useStore } from '../store/useStore';
 import {
   calcConversion,
@@ -17,6 +18,8 @@ import {
   formatNumber,
   formatPercent,
   formatRub,
+  itemsInDateRange,
+  lastNDaysRange,
 } from '../lib/analytics';
 import { Empty } from '../components/Empty';
 import type { AvitoItem } from '../types';
@@ -42,6 +45,7 @@ const efficiencyLabels: Record<EfficiencyFilter, string> = {
 
 export default function Items() {
   const items = useStore((s) => s.items);
+  const metrics = useStore((s) => s.metrics);
   const kpi = useStore((s) => s.kpi);
   const setItemBid = useStore((s) => s.setItemBid);
 
@@ -50,9 +54,16 @@ export default function Items() {
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
   const [efficiency, setEfficiency] = useState<EfficiencyFilter>('all');
-  const [period, setPeriod] = useState<'7' | '14' | '30'>('30');
+  const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Пересчитываем items: суммы метрик за выбранный период.
+  // Это и есть «настоящий» фильтр по дням, который раньше не работал.
+  const itemsForPeriod = useMemo(
+    () => itemsInDateRange(items, metrics, period.from, period.to),
+    [items, metrics, period.from, period.to]
+  );
 
   const categories = useMemo(
     () => Array.from(new Set(items.map((i) => i.category))).sort(),
@@ -64,7 +75,7 @@ export default function Items() {
   );
 
   const filtered = useMemo(() => {
-    const list = items.filter((it) => {
+    const list = itemsForPeriod.filter((it) => {
       if (search && !it.title.toLowerCase().includes(search.toLowerCase())) return false;
       if (category !== 'all' && it.category !== category) return false;
       if (region !== 'all' && it.region !== region) return false;
@@ -106,34 +117,26 @@ export default function Items() {
       return (get(a) - get(b)) * dir;
     });
     return list;
-  }, [items, kpi, search, category, region, status, efficiency, sortBy, sortDir]);
+  }, [itemsForPeriod, kpi, search, category, region, status, efficiency, sortBy, sortDir]);
 
   return (
     <Layout
       title="Объявления"
-      subtitle={`Найдено ${filtered.length} из ${items.length}. Период: последние ${period} дней.`}
+      subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
     >
       <div className="card p-4 mb-4">
         <div className="flex items-center gap-2 mb-3">
           <Filter className="w-4 h-4 text-ink-400" />
-          <h2 className="font-semibold text-white text-sm">Фильтры</h2>
+          <h2 className="font-semibold text-white text-sm">Период и фильтры</h2>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <PeriodPicker value={period} onChange={setPeriod} className="mb-3" />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <input
             placeholder="Поиск по названию"
             className="input"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <select
-            className="input"
-            value={period}
-            onChange={(e) => setPeriod(e.target.value as '7' | '14' | '30')}
-          >
-            <option value="7">7 дней</option>
-            <option value="14">14 дней</option>
-            <option value="30">30 дней</option>
-          </select>
           <select
             className="input"
             value={category}

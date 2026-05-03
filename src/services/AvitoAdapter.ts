@@ -16,6 +16,17 @@ export type AvitoExternalEvent = Omit<
   'id' | 'userId' | 'source'
 >;
 
+/** Баланс аккаунта в Авито. */
+export type AvitoBalance = {
+  /** Реальный баланс (рубли, доступные на счёте). */
+  real: number;
+  /** Бонусные средства. */
+  bonus: number;
+  /** CPA-аванс — деньги, зарезервированные под целевые действия. */
+  advance: number;
+  fetchedAt: string;
+};
+
 /**
  * Слой интеграции с Avito API.
  *
@@ -49,6 +60,11 @@ export interface IAvitoAdapter {
     dateFrom?: string;
     dateTo?: string;
   }): Promise<AvitoExternalEvent[]>;
+  /**
+   * Подтянуть баланс аккаунта Авито (реальные средства, бонусы и CPA-аванс).
+   * Возвращает null, если режим не api или прокси недоступен.
+   */
+  fetchBalance(): Promise<AvitoBalance | null>;
 }
 
 /**
@@ -433,6 +449,42 @@ export class AvitoAdapter implements IAvitoAdapter {
 
   async importCsv(text: string): Promise<CsvImportResult> {
     return parseCsvImport(text);
+  }
+
+  /**
+   * Получить баланс аккаунта Avito.
+   * GET /core/v1/accounts/{id}/balance/ — отдаёт { real, bonus } в обычном виде,
+   * аванс CPA — отдельно через /cpxpromo/1/balanceInfo (по тарифу).
+   * Если оба эндпоинта недоступны — вернётся то, что удалось получить.
+   */
+  async fetchBalance(): Promise<AvitoBalance | null> {
+    if (this.settings.mode !== 'api') return null;
+    if (!PROXY_BASE) return null;
+    try {
+      const data = await proxyFetch<Record<string, unknown>>(
+        '/api/account/balance',
+        this.headers()
+      );
+      // Структура от Avito может быть либо { real, bonus }, либо
+      // { result: { real, bonus, ... } } — поддержим оба варианта.
+      const root =
+        (data.result as Record<string, unknown> | undefined) ??
+        (data as Record<string, unknown>);
+      const real = Number(root.real ?? root.realBalance ?? 0);
+      const bonus = Number(root.bonus ?? root.bonusBalance ?? 0);
+      const advance = Number(
+        root.advance ?? root.cpaAdvance ?? root.cpa ?? 0
+      );
+      return {
+        real,
+        bonus,
+        advance,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (e) {
+      console.warn('[AvitoAdapter] fetchBalance error:', e);
+      return null;
+    }
   }
 
   /**

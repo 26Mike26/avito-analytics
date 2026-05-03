@@ -24,7 +24,7 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
-import { AvitoAdapter } from '../services/AvitoAdapter';
+import { AvitoAdapter, type AvitoBalance } from '../services/AvitoAdapter';
 import { authService } from '../services/AuthService';
 import { repository } from '../services/Repository';
 import { SUPABASE_ENABLED } from '../services/supabase';
@@ -135,6 +135,8 @@ type Store = {
   notes: Record<string, string>;
   integration: IntegrationSettings;
   adapter: AvitoAdapter;
+  /** Баланс активного аккаунта Avito (real / bonus / advance). null — не загружен. */
+  balance: AvitoBalance | null;
 
   // ───── Управление сессией
   bootstrap: () => Promise<void>;
@@ -209,6 +211,7 @@ export const useStore = create<Store>((set, get) => {
     notes: {},
     integration: defaultIntegration,
     adapter,
+    balance: null,
 
     bootstrap: async () => {
       // ─── Supabase режим ───
@@ -758,6 +761,13 @@ export const useStore = create<Store>((set, get) => {
         if (events.length > 0) get().ingestAvitoEvents(events);
       } catch (e) {
         console.warn('[adapter] fetchAvitoEvents failed:', e);
+      }
+      // Баланс кошелька (real + bonus + CPA-аванс).
+      try {
+        const balance = await adapter.fetchBalance();
+        if (balance) set({ balance });
+      } catch (e) {
+        console.warn('[adapter] fetchBalance failed:', e);
       }
       const accs = { ...get().accounts };
       const acc = accs[id];

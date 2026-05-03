@@ -193,6 +193,62 @@ export function regionAverages(items: AvitoItem[]) {
   return out;
 }
 
+/**
+ * Пересчитывает items, подставляя суммы метрик за выбранный диапазон дат.
+ * Используется и на дашборде, и в списке объявлений, чтобы фильтры по
+ * периоду действительно влияли на показатели (а не только на подзаголовок).
+ *
+ * dateFrom/dateTo — в формате YYYY-MM-DD, включительно.
+ * Если указан только dateFrom — берём с этой даты до сегодня.
+ * Если ни тот, ни другой — возвращаем items как есть.
+ */
+export function itemsInDateRange(
+  items: AvitoItem[],
+  metrics: ItemMetrics[],
+  dateFrom?: string,
+  dateTo?: string
+): AvitoItem[] {
+  if (!dateFrom && !dateTo) return items;
+  const from = dateFrom ?? '0000-01-01';
+  const to = dateTo ?? '9999-12-31';
+  const filtered = metrics.filter((m) => m.date >= from && m.date <= to);
+  if (filtered.length === 0) {
+    // Нет метрик за период — занулим показатели у items, чтобы не вводить в заблуждение
+    return items.map((it) => ({
+      ...it,
+      views: 0,
+      contacts: 0,
+      favorites: 0,
+      spend: 0,
+    }));
+  }
+  const sumByItem = new Map<string, { views: number; contacts: number; favorites: number; spend: number }>();
+  for (const m of filtered) {
+    const cur = sumByItem.get(m.itemId) ?? { views: 0, contacts: 0, favorites: 0, spend: 0 };
+    cur.views += m.views;
+    cur.contacts += m.contacts;
+    cur.favorites += m.favorites;
+    cur.spend += m.spend;
+    sumByItem.set(m.itemId, cur);
+  }
+  return items.map((it) => {
+    const sum = sumByItem.get(it.id);
+    if (!sum) {
+      return { ...it, views: 0, contacts: 0, favorites: 0, spend: 0 };
+    }
+    return { ...it, ...sum };
+  });
+}
+
+/** Возвращает диапазон дат «последние N дней включительно» в формате YYYY-MM-DD. */
+export function lastNDaysRange(days: number, today = new Date()): { from: string; to: string } {
+  const t = new Date(today);
+  const from = new Date(t);
+  from.setDate(t.getDate() - (days - 1));
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: fmt(from), to: fmt(t) };
+}
+
 export function aggregateMetricsByDate(metrics: ItemMetrics[]) {
   const map = new Map<string, { date: string; views: number; contacts: number; spend: number; favorites: number }>();
   for (const m of metrics) {
