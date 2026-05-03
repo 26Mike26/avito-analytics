@@ -224,23 +224,14 @@ export class AvitoAdapter implements IAvitoAdapter {
         }
         // ─── Подтянем расходы из operations_history и распределим по item+date.
         // Avito не отдаёт spent в /stats/v1/items, но в operations_history
-        // у каждого списания есть itemId и updatedAt — можно агрегировать.
+        // у каждого списания за услугу (vas/cpa/cpc/cpx) есть itemId.
         try {
           // Avito ждёт ISO 8601 с временем (dateTimeFrom/dateTimeTo).
           const dtFrom = `${fmt(past)}T00:00:00Z`;
           const dtTo = `${fmt(today)}T23:59:59Z`;
           const opsData = await proxyFetch<{
             result?: {
-              operations?: Array<{
-                updatedAt?: string;
-                operationDate?: string;
-                itemId?: number | string;
-                amountTotal?: number;
-                amountRub?: number;
-                amount?: number;
-                operationName?: string;
-                operationType?: string;
-              }>;
+              operations?: Array<Record<string, unknown>>;
             };
             operations?: unknown[];
           }>(
@@ -249,32 +240,65 @@ export class AvitoAdapter implements IAvitoAdapter {
             )}&dateTo=${encodeURIComponent(dtTo)}`,
             this.headers()
           );
-          const ops =
-            (opsData.result?.operations ?? (opsData.operations as Array<Record<string, unknown>>) ?? []);
+          const ops = (opsData.result?.operations ??
+            (opsData.operations as Array<Record<string, unknown>>) ??
+            []);
           const spendByKey = new Map<string, number>();
-          for (const opRaw of ops) {
-            const op = opRaw as Record<string, unknown>;
-            // amountTotal приоритетнее, потом amountRub, потом amount
-            const amount = Number(op.amountTotal ?? op.amountRub ?? op.amount ?? 0);
+          let chargesCount = 0;
+          for (const op of ops) {
             const itemId = op.itemId;
+            // Расход — только то, что относится к конкретному объявлению.
+            // Пополнения баланса/CPA-авансы итемом не привязаны и не считаются.
+            if (itemId == null) continue;
+            const amount = Number(
+              op.amountTotal ?? op.amountRub ?? op.amount ?? 0
+            );
             const ts = String(op.updatedAt ?? op.operationDate ?? '');
             if (!ts || amount === 0) continue;
-            // Учитываем только списания (отрицательные суммы)
-            if (amount >= 0) continue;
-            // Если operations_history не привязан к itemId — попадёт в общий «нераспределённый»
+            // В Avito суммы приходят положительными, тип определяется через
+            // operationType / serviceType. «Резервирование средств под услугу»
+            // или любой serviceType in (vas, cpa, cpc, cpx) — это и есть списание.
+            chargesCount++;
             const date = ts.slice(0, 10);
-            const key = `${itemId ?? '_unknown'}|${date}`;
-            spendByKey.set(key, (spendByKey.get(key) ?? 0) + Math.abs(amount));
+            const key = `${itemId}|${date}`;
+            // Берём абсолютное значение на случай если когда-нибудь придёт отрицательное.
+            spendByKey.set(
+              key,
+              (spendByKey.get(key) ?? 0) + Math.abs(amount)
+            );
           }
-          // Накладываем на out по item+date
+          // Накладываем на out по item+date.
           for (const m of out) {
             const key = `${m.itemId}|${m.date}`;
             const sp = spendByKey.get(key);
             if (sp) m.spend = sp;
           }
-          if (spendByKey.size === 0) {
+          // Если у item были списания, но в out не было записи на эту дату —
+          // создадим строку, иначе расход просто потеряется.
+          for (const [key, sp] of spendByKey.entries()) {
+            const [itemId, date] = key.split('|');
+            const exists = out.some(
+              (m) => m.itemId === itemId && m.date === date
+            );
+            if (!exists) {
+              out.push({
+                itemId,
+                date,
+                views: 0,
+                contacts: 0,
+                favorites: 0,
+                spend: sp,
+                bid: 0,
+              });
+            }
+          }
+          if (chargesCount === 0) {
             console.warn(
-              '[AvitoAdapter] operations_history не вернул списаний за период (или формат полей другой). Расход останется 0.'
+              '[AvitoAdapter] В operations_history нет операций с itemId за период — расход останется 0.'
+            );
+          } else {
+            console.info(
+              `[AvitoAdapter] Подтянуто ${chargesCount} операций с расходами, по ${spendByKey.size} парам item+date.`
             );
           }
         } catch (e) {
@@ -435,21 +459,40 @@ export class AvitoAdapter implements IAvitoAdapter {
           dateTo: opts?.dateTo ?? fmt(today),
         });
         const data = await proxyFetch<{
-          result?: { operations?: Array<{ updatedAt: string; type: string; amountTotal: number; serviceName?: string }> };
+          result?: {
+            operations?: Array<Record<string, unknown>>;
+          };
         }>(`/api/account/operations?${qs.toString()}`, this.headers());
         const ops = data.result?.operations ?? [];
-        return ops.map((o) => ({
-          timestamp: o.updatedAt,
-          type:
-            o.amountTotal > 0
-              ? 'avito_balance_topup'
-              : 'avito_balance_charge',
-          title:
-            o.amountTotal > 0
-              ? 'Пополнение баланса Авито'
-              : `Списание: ${o.serviceName ?? 'продвижение'}`,
-          details: `Сумма: ${Math.abs(o.amountTotal)} ₽`,
-        }));
+        return ops
+          .map((opRaw) => {
+            const o = opRaw as Record<string, unknown>;
+            const amount = Number(o.amountTotal ?? o.amountRub ?? 0);
+            const opType = String(o.operationType ?? '').toLowerCase();
+            const opName = String(o.operationName ?? '');
+            const serviceName = String(o.serviceName ?? '');
+            const ts = String(o.updatedAt ?? '');
+            // В Avito суммы всегда положительные. Тип определяется через
+            // operationType: «аванс» / «внесение CPA аванса» — пополнение,
+            // «резервирование средств под услугу» — списание.
+            const isCharge =
+              opType.includes('резервирование') ||
+              opType.includes('списан') ||
+              o.itemId != null;
+            return {
+              timestamp: ts,
+              type: isCharge
+                ? ('avito_balance_charge' as const)
+                : ('avito_balance_topup' as const),
+              title: isCharge
+                ? `Списание: ${serviceName || opName || 'продвижение'}`
+                : opName || 'Пополнение баланса Авито',
+              details: `Сумма: ${amount.toLocaleString('ru-RU')} ₽${
+                o.itemId ? ` · объявление ${o.itemId}` : ''
+              }`,
+            };
+          })
+          .filter((e) => e.timestamp);
       } catch (e) {
         console.warn(
           '[AvitoAdapter] fetchAvitoEvents API error, fallback на demo:',
