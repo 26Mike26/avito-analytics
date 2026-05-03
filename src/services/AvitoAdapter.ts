@@ -226,35 +226,56 @@ export class AvitoAdapter implements IAvitoAdapter {
         // Avito не отдаёт spent в /stats/v1/items, но в operations_history
         // у каждого списания есть itemId и updatedAt — можно агрегировать.
         try {
+          // Avito ждёт ISO 8601 с временем (dateTimeFrom/dateTimeTo).
+          const dtFrom = `${fmt(past)}T00:00:00Z`;
+          const dtTo = `${fmt(today)}T23:59:59Z`;
           const opsData = await proxyFetch<{
             result?: {
               operations?: Array<{
-                updatedAt: string;
+                updatedAt?: string;
+                operationDate?: string;
                 itemId?: number | string;
-                amountTotal: number;
+                amountTotal?: number;
+                amountRub?: number;
+                amount?: number;
                 operationName?: string;
+                operationType?: string;
               }>;
             };
+            operations?: unknown[];
           }>(
             `/api/account/operations?dateFrom=${encodeURIComponent(
-              fmt(past)
-            )}&dateTo=${encodeURIComponent(fmt(today))}`,
+              dtFrom
+            )}&dateTo=${encodeURIComponent(dtTo)}`,
             this.headers()
           );
-          const ops = opsData.result?.operations ?? [];
-          const spendByKey = new Map<string, number>(); // `${itemId}|${date}` → spend
-          for (const op of ops) {
-            // Списания за продвижение приходят с amountTotal < 0
-            if (op.amountTotal >= 0 || !op.itemId) continue;
-            const date = op.updatedAt.slice(0, 10);
-            const key = `${op.itemId}|${date}`;
-            spendByKey.set(key, (spendByKey.get(key) ?? 0) + Math.abs(op.amountTotal));
+          const ops =
+            (opsData.result?.operations ?? (opsData.operations as Array<Record<string, unknown>>) ?? []);
+          const spendByKey = new Map<string, number>();
+          for (const opRaw of ops) {
+            const op = opRaw as Record<string, unknown>;
+            // amountTotal приоритетнее, потом amountRub, потом amount
+            const amount = Number(op.amountTotal ?? op.amountRub ?? op.amount ?? 0);
+            const itemId = op.itemId;
+            const ts = String(op.updatedAt ?? op.operationDate ?? '');
+            if (!ts || amount === 0) continue;
+            // Учитываем только списания (отрицательные суммы)
+            if (amount >= 0) continue;
+            // Если operations_history не привязан к itemId — попадёт в общий «нераспределённый»
+            const date = ts.slice(0, 10);
+            const key = `${itemId ?? '_unknown'}|${date}`;
+            spendByKey.set(key, (spendByKey.get(key) ?? 0) + Math.abs(amount));
           }
-          // Накладываем на out
+          // Накладываем на out по item+date
           for (const m of out) {
             const key = `${m.itemId}|${m.date}`;
             const sp = spendByKey.get(key);
             if (sp) m.spend = sp;
+          }
+          if (spendByKey.size === 0) {
+            console.warn(
+              '[AvitoAdapter] operations_history не вернул списаний за период (или формат полей другой). Расход останется 0.'
+            );
           }
         } catch (e) {
           console.warn(
