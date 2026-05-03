@@ -199,14 +199,18 @@ app.get('/api/account/balance', withAcc(async (accountId, _req, res) => {
 
 app.get('/api/account/operations', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo } = req.query;
-  const qs = new URLSearchParams();
-  if (dateFrom) qs.set('dateTimeFrom', String(dateFrom));
-  if (dateTo) qs.set('dateTimeTo', String(dateTo));
+  // Avito ждёт ISO 8601 c временем И тело JSON (НЕ query). Без этого 400 invalid content type.
   res.json(
     await avitoFetch(
       accountId,
-      `/core/v1/accounts/operations_history/?${qs.toString()}`,
-      { method: 'POST' }
+      `/core/v1/accounts/operations_history/`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          dateTimeFrom: String(dateFrom ?? ''),
+          dateTimeTo: String(dateTo ?? ''),
+        }),
+      }
     )
   );
 }));
