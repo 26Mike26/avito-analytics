@@ -161,44 +161,106 @@ export class AvitoAdapter implements IAvitoAdapter {
         const past = new Date(today);
         past.setDate(today.getDate() - 30);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        const data = await proxyFetch<{ result?: { items?: unknown[] } }>(
-          '/api/stats/items',
-          {
-            method: 'POST',
-            ...this.headers(),
-            body: JSON.stringify({
-              dateFrom: fmt(past),
-              dateTo: fmt(today),
-              itemIds: items.map((i) => Number(i.id)).filter(Boolean),
-              fields: ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
-            }),
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        const itemIds = items
+          .map((i) => Number(i.id))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        if (itemIds.length === 0) {
+          console.warn('[AvitoAdapter] fetchMetrics: пустой список itemIds');
+          return [];
+        }
+        // Avito API ограничивает запрос размером 200 itemIds — режем на пачки.
         const out: ItemMetrics[] = [];
-        const list = (data.result?.items ?? []) as Array<{
-          itemId?: number | string;
-          stats?: Array<{
-            date: string;
-            views?: number;
-            contacts?: number;
-            favorites?: number;
-            spent?: number;
+        for (let i = 0; i < itemIds.length; i += 200) {
+          const slice = itemIds.slice(i, i + 200);
+          const data = await proxyFetch<{ result?: { items?: unknown[] } }>(
+            '/api/stats/items',
+            {
+              method: 'POST',
+              ...this.headers(),
+              body: JSON.stringify({
+                dateFrom: fmt(past),
+                dateTo: fmt(today),
+                itemIds: slice,
+                // Avito API enum: views, uniqViews, contacts, uniqContacts,
+                // favorites, uniqFavorites. Поля «spent» в этой ручке нет —
+                // расход тянем из /core/v1/accounts/{id}/operations_history/.
+                fields: ['uniqViews', 'contacts', 'favorites'],
+                periodGrouping: 'day',
+              }),
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+          const list = (data.result?.items ?? []) as Array<{
+            itemId?: number | string;
+            stats?: Array<{
+              date: string;
+              views?: number;
+              uniqViews?: number;
+              contacts?: number;
+              favorites?: number;
+              spent?: number;
+            }>;
           }>;
-        }>;
-        for (const row of list) {
-          const id = String(row.itemId);
-          for (const s of row.stats ?? []) {
-            out.push({
-              itemId: id,
-              date: s.date,
-              views: Number(s.views ?? 0),
-              contacts: Number(s.contacts ?? 0),
-              favorites: Number(s.favorites ?? 0),
-              spend: Number(s.spent ?? 0),
-              bid: 0,
-            });
+          for (const row of list) {
+            const id = String(row.itemId);
+            for (const s of row.stats ?? []) {
+              out.push({
+                itemId: id,
+                date: s.date,
+                // uniqViews приоритетнее, fallback на views
+                views: Number(s.uniqViews ?? s.views ?? 0),
+                contacts: Number(s.contacts ?? 0),
+                favorites: Number(s.favorites ?? 0),
+                spend: Number(s.spent ?? 0),
+                bid: 0,
+              });
+            }
           }
+        }
+        if (out.length === 0) {
+          console.warn(
+            '[AvitoAdapter] Avito не вернул статистику — возможно, у объявлений ещё нет данных за период, или не включён scope stats:read.'
+          );
+        }
+        // ─── Подтянем расходы из operations_history и распределим по item+date.
+        // Avito не отдаёт spent в /stats/v1/items, но в operations_history
+        // у каждого списания есть itemId и updatedAt — можно агрегировать.
+        try {
+          const opsData = await proxyFetch<{
+            result?: {
+              operations?: Array<{
+                updatedAt: string;
+                itemId?: number | string;
+                amountTotal: number;
+                operationName?: string;
+              }>;
+            };
+          }>(
+            `/api/account/operations?dateFrom=${encodeURIComponent(
+              fmt(past)
+            )}&dateTo=${encodeURIComponent(fmt(today))}`,
+            this.headers()
+          );
+          const ops = opsData.result?.operations ?? [];
+          const spendByKey = new Map<string, number>(); // `${itemId}|${date}` → spend
+          for (const op of ops) {
+            // Списания за продвижение приходят с amountTotal < 0
+            if (op.amountTotal >= 0 || !op.itemId) continue;
+            const date = op.updatedAt.slice(0, 10);
+            const key = `${op.itemId}|${date}`;
+            spendByKey.set(key, (spendByKey.get(key) ?? 0) + Math.abs(op.amountTotal));
+          }
+          // Накладываем на out
+          for (const m of out) {
+            const key = `${m.itemId}|${m.date}`;
+            const sp = spendByKey.get(key);
+            if (sp) m.spend = sp;
+          }
+        } catch (e) {
+          console.warn(
+            '[AvitoAdapter] Не удалось подтянуть расходы из operations_history:',
+            e
+          );
         }
         return out;
       } catch (e) {

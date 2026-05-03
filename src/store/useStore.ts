@@ -761,7 +761,29 @@ export const useStore = create<Store>((set, get) => {
       }
       const accs = { ...get().accounts };
       const acc = accs[id];
-      const itemsWithRec = applyBidRecommendationsToItems(items, acc.kpi, metrics);
+      // Обогащаем items суммами из metrics — иначе таблица объявлений
+      // показывает нули даже если статистика реально пришла.
+      const enrichedItems = items.map((it) => {
+        const itemMetrics = metrics.filter((m) => m.itemId === it.id);
+        if (itemMetrics.length === 0) return it;
+        const sum = itemMetrics.reduce(
+          (s, m) => ({
+            views: s.views + m.views,
+            contacts: s.contacts + m.contacts,
+            favorites: s.favorites + m.favorites,
+            spend: s.spend + m.spend,
+          }),
+          { views: 0, contacts: 0, favorites: 0, spend: 0 }
+        );
+        return {
+          ...it,
+          views: it.views || sum.views,
+          contacts: it.contacts || sum.contacts,
+          favorites: it.favorites || sum.favorites,
+          spend: it.spend || sum.spend,
+        };
+      });
+      const itemsWithRec = applyBidRecommendationsToItems(enrichedItems, acc.kpi, metrics);
       const recs = buildRecommendations(itemsWithRec, acc.kpi, metrics);
       const updated: AccountData = {
         ...acc,
