@@ -39,14 +39,18 @@ export default function ItemDetail() {
   const items = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
   const kpi = useStore((s) => s.kpi);
+  const initialized = useStore((s) => s.initialized);
+  const loading = useStore((s) => s.loading);
   const setItemBid = useStore((s) => s.setItemBid);
   const bidHistory = useStore((s) => s.bidHistory);
   const notes = useStore((s) => s.notes);
   const setNote = useStore((s) => s.setNote);
 
-  const item = items.find((i) => i.id === id);
+  // Толерантный поиск: и URL-id, и items[].id могут оказаться числом или
+  // строкой в зависимости от источника (демо/CSV/API). Приводим оба к строке.
+  const item = items.find((i) => String(i.id) === String(id));
   const itemMetrics = useMemo(
-    () => metrics.filter((m) => m.itemId === id),
+    () => metrics.filter((m) => String(m.itemId) === String(id)),
     [metrics, id]
   );
   const dailySeries = useMemo(
@@ -56,15 +60,28 @@ export default function ItemDetail() {
   const categoryStats = useMemo(() => categoryAverages(items), [items]);
 
   const [bidDraft, setBidDraft] = useState<string>('');
-  const itemNote = notes[id ?? ''] ?? '';
+  const itemNote = notes[String(id ?? '')] ?? '';
   const [noteDraft, setNoteDraft] = useState(itemNote);
+
+  // Состояние загрузки: store ещё не подтянул данные → показываем спиннер,
+  // а не «не найдено». Это убирает мерцание «отключено», когда на самом деле
+  // идёт первый init или обновление через API.
+  if (!initialized || loading) {
+    return (
+      <Layout title="Загрузка объявления…">
+        <div className="card p-8 text-center text-ink-300">
+          Загружаем данные аккаунта…
+        </div>
+      </Layout>
+    );
+  }
 
   if (!item) {
     return (
       <Layout title="Объявление не найдено">
         <Empty
           title="Не удалось найти объявление"
-          hint="Возможно, оно было удалено или ID указан неверно."
+          hint={`ID «${id}» отсутствует в загруженных данных. Возможно, объявление было снято с публикации, либо данные ещё не подтянулись — нажмите «Обновить» в шапке. Сейчас в аккаунте загружено объявлений: ${items.length}.`}
           action={
             <Link to="/items" className="btn-primary">
               К списку объявлений

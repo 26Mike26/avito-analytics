@@ -28,7 +28,9 @@ import {
   calcCpl,
   itemsInDateRange,
   lastNDaysRange,
+  regionAverages,
 } from '../lib/analytics';
+import { MapPin } from 'lucide-react';
 
 export default function Dashboard() {
   const allItems = useStore((s) => s.items);
@@ -36,6 +38,7 @@ export default function Dashboard() {
   const kpi = useStore((s) => s.kpi);
   const recommendations = useStore((s) => s.recommendations);
   const balance = useStore((s) => s.balance);
+  const accountCharges = useStore((s) => s.accountCharges);
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
@@ -44,7 +47,16 @@ export default function Dashboard() {
     () => itemsInDateRange(allItems, metrics, period.from, period.to),
     [allItems, metrics, period.from, period.to]
   );
+  // Общие расходы аккаунта (рассылки, прочие услуги без itemId) за период
+  const accountSpendInPeriod = useMemo(
+    () =>
+      accountCharges
+        .filter((c) => c.date >= period.from && c.date <= period.to)
+        .reduce((s, c) => s + c.amount, 0),
+    [accountCharges, period.from, period.to]
+  );
   const stats = calculateAccountStats(items, kpi);
+  const totalSpendWithAccount = stats.totalSpend + accountSpendInPeriod;
 
   const sortedByEfficiency = [...items]
     .filter((i) => i.contacts > 0)
@@ -62,6 +74,22 @@ export default function Dashboard() {
   const todayRecs = recommendations
     .filter((r) => r.status === 'new')
     .slice(0, 6);
+
+  // Города с перерасходом (CPL > target). Сортируем по сумме расхода вниз,
+  // чтобы дорогие города были вверху.
+  const cityStats = useMemo(() => {
+    const list = regionAverages(items);
+    return list
+      .map((r) => ({
+        ...r,
+        overspend:
+          r.cpl != null && r.cpl > kpi.targetCpl
+            ? r.cpl - kpi.targetCpl
+            : 0,
+      }))
+      .sort((a, b) => b.spend - a.spend);
+  }, [items, kpi]);
+  const overspendCities = cityStats.filter((c) => c.overspend > 0).slice(0, 5);
 
   const balanceTotal = balance ? balance.real + balance.bonus : null;
 
@@ -115,9 +143,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="Расход"
-          value={formatRub(stats.totalSpend)}
+          value={formatRub(totalSpendWithAccount)}
           icon={Coins}
-          hint={`${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`}
+          hint={
+            accountSpendInPeriod > 0
+              ? `Объявления ${formatRub(stats.totalSpend)} + общие ${formatRub(accountSpendInPeriod)}`
+              : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
+          }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />
         <KpiCard
@@ -282,6 +314,78 @@ export default function Dashboard() {
           items={overspend}
         />
       </div>
+
+      {/* Города с перерасходом */}
+      {cityStats.length > 0 && (
+        <div className="card p-5 mb-6">
+          <div className="flex items-center gap-2 mb-4">
+            <MapPin className="w-4 h-4 text-accent" />
+            <h2 className="font-semibold text-white">Статистика по городам</h2>
+            {overspendCities.length > 0 && (
+              <Badge tone="red">
+                {overspendCities.length} с перерасходом
+              </Badge>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="table-th">Город</th>
+                  <th className="table-th text-right">Расход</th>
+                  <th className="table-th text-right">Контактов</th>
+                  <th className="table-th text-right">CPL</th>
+                  <th className="table-th text-right">Конверсия</th>
+                  <th className="table-th">Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cityStats.slice(0, 10).map((c) => {
+                  const isOverspend = c.overspend > 0;
+                  return (
+                    <tr key={c.region} className="table-row">
+                      <td className="table-td font-medium text-white">{c.region}</td>
+                      <td className="table-td text-right">{formatRub(c.spend)}</td>
+                      <td className="table-td text-right">
+                        {formatNumber(c.contacts)}
+                      </td>
+                      <td
+                        className={`table-td text-right ${
+                          isOverspend ? 'text-rose-300 font-semibold' : ''
+                        }`}
+                      >
+                        {c.cpl != null ? formatRub(c.cpl) : '—'}
+                      </td>
+                      <td className="table-td text-right">
+                        {c.conversion != null
+                          ? formatPercent(c.conversion)
+                          : '—'}
+                      </td>
+                      <td className="table-td">
+                        {isOverspend ? (
+                          <Badge tone="red">
+                            +{formatRub(c.overspend)} к цели
+                          </Badge>
+                        ) : c.cpl != null && c.cpl <= kpi.targetCpl ? (
+                          <Badge tone="green">в норме</Badge>
+                        ) : (
+                          <Badge tone="gray">нет лидов</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {cityStats.length > 10 && (
+            <div className="text-xs text-ink-400 mt-2">
+              Показано 10 из {cityStats.length} городов. Полная разбивка — на
+              странице «Аналитика».
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card p-5">
         <div className="flex items-center justify-between mb-4">

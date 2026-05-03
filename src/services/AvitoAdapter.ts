@@ -16,6 +16,29 @@ export type AvitoExternalEvent = Omit<
   'id' | 'userId' | 'source'
 >;
 
+/**
+ * Нормализует адрес из Авито: «Санкт-Петербург, ул. Лебедева, 20АБ» → «Санкт-Петербург».
+ * Если в строке сразу регион (без «г.» в начале), вернёт его. Пустую → «—».
+ */
+function normalizeCity(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  if (!s) return '—';
+  // Берём первый сегмент до запятой
+  const first = s.split(',')[0].trim();
+  // Чистим распространённые префиксы
+  return first.replace(/^г\.?\s*/i, '').trim() || '—';
+}
+
+/**
+ * Общий расход аккаунта по дням, не привязанный к конкретному объявлению:
+ * рассылки, услуги по аккаунту, прочие списания где Авито не возвращает itemId.
+ */
+export type AccountCharge = {
+  date: string;
+  amount: number;
+  description: string;
+};
+
 /** Баланс аккаунта в Авито. */
 export type AvitoBalance = {
   /** Реальный баланс (рубли, доступные на счёте). */
@@ -65,6 +88,19 @@ export interface IAvitoAdapter {
    * Возвращает null, если режим не api или прокси недоступен.
    */
   fetchBalance(): Promise<AvitoBalance | null>;
+  /**
+   * Подтянуть текущие ставки CPx (цена за целевое действие) по объявлениям.
+   * Возвращает Map<itemId → ставка_в_рублях>. В демо-режиме — пустая мапа.
+   */
+  fetchBids(): Promise<Map<string, number>>;
+  /**
+   * Подтянуть общие расходы аккаунта (без привязки к объявлению):
+   * рассылки, услуги по аккаунту, прочие списания.
+   */
+  fetchAccountCharges(opts?: {
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<AccountCharge[]>;
 }
 
 /**
@@ -151,7 +187,9 @@ export class AvitoAdapter implements IAvitoAdapter {
               ? 'paused'
               : 'active',
           category: it.category?.name ?? 'Без категории',
-          region: it.address ?? '—',
+          // Авито возвращает полный адрес «Санкт-Петербург, ул. Лебедева, 20АБ».
+          // Для группировки оставляем только город (до первой запятой).
+          region: normalizeCity(it.address),
           price: Number(it.price ?? 0),
           currentBid: 0,
           recommendedBid: 0,
@@ -452,29 +490,137 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
+   * Тянет операции и фильтрует только списания БЕЗ itemId — это и есть
+   * «общие расходы аккаунта»: рассылки, услуги по аккаунту, прочие.
+   * Пополнения баланса (operationType содержит «аванс» или «пополнен»)
+   * исключаются.
+   */
+  async fetchAccountCharges(opts?: {
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<AccountCharge[]> {
+    if (this.settings.mode !== 'api') return [];
+    if (!PROXY_BASE) return [];
+    try {
+      const today = new Date();
+      const past = new Date(today);
+      past.setDate(today.getDate() - 30);
+      const dtFrom = opts?.dateFrom ?? `${past.toISOString().slice(0, 10)}T00:00:00Z`;
+      const dtTo = opts?.dateTo ?? `${today.toISOString().slice(0, 10)}T23:59:59Z`;
+      const data = await proxyFetch<{
+        result?: { operations?: Array<Record<string, unknown>> };
+      }>(
+        `/api/account/operations?dateFrom=${encodeURIComponent(
+          dtFrom
+        )}&dateTo=${encodeURIComponent(dtTo)}`,
+        this.headers()
+      );
+      const ops = data.result?.operations ?? [];
+      const out: AccountCharge[] = [];
+      for (const op of ops) {
+        // Только то, что НЕ привязано к объявлению (расходы без itemId).
+        if (op.itemId != null) continue;
+        const opType = String(op.operationType ?? '').toLowerCase();
+        const opName = String(op.operationName ?? '');
+        // Пополнения исключаем — это входящие, а не списания.
+        if (
+          opType.includes('аванс') ||
+          opType.includes('пополнен') ||
+          opName.toLowerCase().includes('пополнение')
+        ) {
+          continue;
+        }
+        const amount = Number(op.amountTotal ?? op.amountRub ?? op.amount ?? 0);
+        const ts = String(op.updatedAt ?? op.operationDate ?? '');
+        if (!ts || amount === 0) continue;
+        out.push({
+          date: ts.slice(0, 10),
+          amount: Math.abs(amount),
+          description:
+            opName ||
+            (op.serviceName ? `Услуга: ${op.serviceName}` : 'Расход аккаунта'),
+        });
+      }
+      return out;
+    } catch (e) {
+      console.warn('[AvitoAdapter] fetchAccountCharges error:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Тянет CPA-ставки по объявлениям через /cpxpromo/1/bids/get.
+   * Возвращает Map<itemId, bid в рублях>. Если у пользователя нет CPA-кампаний
+   * или эндпоинт недоступен — возвращает пустую мапу (это нормально).
+   */
+  async fetchBids(): Promise<Map<string, number>> {
+    if (this.settings.mode !== 'api') return new Map();
+    if (!PROXY_BASE) return new Map();
+    try {
+      const data = await proxyFetch<{
+        result?: {
+          bids?: Array<{ itemId: number | string; bid?: number; manual?: boolean }>;
+        };
+        bids?: Array<{ itemId: number | string; bid?: number }>;
+      }>('/api/cpx/bids', this.headers());
+      const bids =
+        (data.result?.bids ?? data.bids ?? []) as Array<{
+          itemId: number | string;
+          bid?: number;
+        }>;
+      const out = new Map<string, number>();
+      for (const b of bids) {
+        if (b.itemId == null) continue;
+        out.set(String(b.itemId), Number(b.bid ?? 0));
+      }
+      return out;
+    } catch (e) {
+      console.warn('[AvitoAdapter] fetchBids error (возможно, CPA не подключён):', e);
+      return new Map();
+    }
+  }
+
+  /**
    * Получить баланс аккаунта Avito.
-   * GET /core/v1/accounts/{id}/balance/ — отдаёт { real, bonus } в обычном виде,
-   * аванс CPA — отдельно через /cpxpromo/1/balanceInfo (по тарифу).
-   * Если оба эндпоинта недоступны — вернётся то, что удалось получить.
+   * Параллельно дёргаем 2 ручки:
+   *   • /api/account/balance        → real + bonus
+   *   • /api/account/cpa-balance    → CPA-аванс (если подключено)
    */
   async fetchBalance(): Promise<AvitoBalance | null> {
     if (this.settings.mode !== 'api') return null;
     if (!PROXY_BASE) return null;
     try {
-      const data = await proxyFetch<Record<string, unknown>>(
-        '/api/account/balance',
-        this.headers()
-      );
-      // Структура от Avito может быть либо { real, bonus }, либо
-      // { result: { real, bonus, ... } } — поддержим оба варианта.
-      const root =
-        (data.result as Record<string, unknown> | undefined) ??
-        (data as Record<string, unknown>);
-      const real = Number(root.real ?? root.realBalance ?? 0);
-      const bonus = Number(root.bonus ?? root.bonusBalance ?? 0);
-      const advance = Number(
-        root.advance ?? root.cpaAdvance ?? root.cpa ?? 0
-      );
+      const [bal, cpa] = await Promise.allSettled([
+        proxyFetch<Record<string, unknown>>('/api/account/balance', this.headers()),
+        proxyFetch<Record<string, unknown>>(
+          '/api/account/cpa-balance',
+          this.headers()
+        ),
+      ]);
+      let real = 0;
+      let bonus = 0;
+      let advance = 0;
+      if (bal.status === 'fulfilled') {
+        const root =
+          (bal.value.result as Record<string, unknown> | undefined) ??
+          (bal.value as Record<string, unknown>);
+        real = Number(root.real ?? root.realBalance ?? 0);
+        bonus = Number(root.bonus ?? root.bonusBalance ?? 0);
+      }
+      if (cpa.status === 'fulfilled') {
+        const root =
+          (cpa.value.result as Record<string, unknown> | undefined) ??
+          (cpa.value as Record<string, unknown>);
+        // Авито отдаёт разные поля в разных версиях — пробуем все
+        advance = Number(
+          root.advance ??
+            root.balance ??
+            root.amount ??
+            root.cpaBalance ??
+            root.realBalance ??
+            0
+        );
+      }
       return {
         real,
         bonus,

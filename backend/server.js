@@ -197,6 +197,21 @@ app.get('/api/account/balance', withAcc(async (accountId, _req, res) => {
   );
 }));
 
+// CPA-аванс — отдельная ручка, не возвращается в /balance/.
+// Если у пользователя нет CPA — Avito ответит 404, мы это глотаем.
+app.get('/api/account/cpa-balance', withAcc(async (accountId, _req, res) => {
+  try {
+    res.json(await avitoFetch(accountId, `/cpxpromo/1/balanceInfo`));
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      // CPA не подключён к аккаунту — это норма, отдаём нули
+      res.json({ result: { balance: 0, advance: 0 }, _note: 'CPA не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
 app.get('/api/account/operations', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo } = req.query;
   // Avito ждёт ISO 8601 c временем И тело JSON (НЕ query). Без этого 400 invalid content type.

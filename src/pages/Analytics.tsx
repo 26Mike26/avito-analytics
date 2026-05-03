@@ -232,29 +232,55 @@ export default function Analytics() {
             </PieChart>
           </ResponsiveContainer>
         </Card>
-        <Card title="Эффективность по регионам">
+        <Card title="Эффективность по городам">
           <div className="space-y-2">
-            {regData.slice(0, 7).map((r) => (
-              <div
-                key={r.region}
-                className="flex items-center justify-between border-b border-ink-800 pb-2 last:border-0 last:pb-0"
-              >
-                <div>
-                  <div className="text-sm font-medium text-white">{r.region}</div>
-                  <div className="text-xs text-ink-400">
-                    {formatNumber(r.contacts)} лидов · {formatRub(r.spend)}
+            {regData.slice(0, 8).map((r) => {
+              const isOverspend = r.cpl != null && r.cpl > kpi.targetCpl;
+              const isGood = r.cpl != null && r.cpl <= kpi.targetCpl && r.contacts > 0;
+              return (
+                <div
+                  key={r.region}
+                  className={[
+                    'flex items-center justify-between border rounded-lg px-3 py-2',
+                    isOverspend
+                      ? 'border-rose-500/30 bg-rose-500/5'
+                      : isGood
+                      ? 'border-emerald-500/30 bg-emerald-500/5'
+                      : 'border-ink-800',
+                  ].join(' ')}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white truncate">
+                      {r.region}
+                    </div>
+                    <div className="text-xs text-ink-400">
+                      {formatNumber(r.contacts)} лидов · {formatRub(r.spend)}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs shrink-0 ml-3">
+                    <div
+                      className={`font-semibold ${
+                        isOverspend
+                          ? 'text-rose-300'
+                          : isGood
+                          ? 'text-emerald-300'
+                          : 'text-white'
+                      }`}
+                    >
+                      {r.cpl != null ? formatRub(r.cpl) : '—'}
+                    </div>
+                    <div className="text-ink-400">
+                      {r.conversion != null ? formatPercent(r.conversion) : '—'}
+                    </div>
                   </div>
                 </div>
-                <div className="text-right text-xs">
-                  <div className="font-medium text-white">
-                    {r.cpl != null ? formatRub(r.cpl) : '—'}
-                  </div>
-                  <div className="text-ink-400">
-                    {r.conversion != null ? formatPercent(r.conversion) : '—'}
-                  </div>
-                </div>
+              );
+            })}
+            {regData.filter((r) => r.cpl != null && r.cpl > kpi.targetCpl).length === 0 && (
+              <div className="text-xs text-ink-400 mt-2">
+                Перерасхода ни в одном городе не выявлено.
               </div>
-            ))}
+            )}
           </div>
         </Card>
       </div>

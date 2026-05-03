@@ -24,7 +24,7 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
-import { AvitoAdapter, type AvitoBalance } from '../services/AvitoAdapter';
+import { AvitoAdapter, type AccountCharge, type AvitoBalance } from '../services/AvitoAdapter';
 import { authService } from '../services/AuthService';
 import { repository } from '../services/Repository';
 import { SUPABASE_ENABLED } from '../services/supabase';
@@ -137,6 +137,8 @@ type Store = {
   adapter: AvitoAdapter;
   /** Баланс активного аккаунта Avito (real / bonus / advance). null — не загружен. */
   balance: AvitoBalance | null;
+  /** Общие расходы аккаунта (без привязки к объявлению): рассылки и т.п. */
+  accountCharges: AccountCharge[];
 
   // ───── Управление сессией
   bootstrap: () => Promise<void>;
@@ -177,6 +179,74 @@ type Store = {
   clearLog: () => void;
 };
 
+/**
+ * Сравнивает два снимка items и возвращает события для журнала действий
+ * (источник = 'avito'). Покрывает три кейса:
+ *   • новое объявление появилось → avito_item_published
+ *   • объявление пропало → avito_item_archived
+ *   • изменилась ставка/цена/заголовок → avito_item_edited
+ */
+function diffItemsToEvents(
+  prev: AvitoItem[],
+  next: AvitoItem[]
+): Array<Omit<ActionLogEntry, 'id' | 'userId' | 'source'>> {
+  const out: Array<Omit<ActionLogEntry, 'id' | 'userId' | 'source'>> = [];
+  const ts = new Date().toISOString();
+  const prevById = new Map(prev.map((p) => [String(p.id), p]));
+  const nextById = new Map(next.map((p) => [String(p.id), p]));
+  // Новые
+  for (const [id, it] of nextById) {
+    if (!prevById.has(id)) {
+      out.push({
+        timestamp: ts,
+        type: 'avito_item_published',
+        title: `Новое объявление: «${it.title}»`,
+        details: `${it.category} · ${it.region}`,
+      });
+    }
+  }
+  // Снятые
+  for (const [id, it] of prevById) {
+    if (!nextById.has(id)) {
+      out.push({
+        timestamp: ts,
+        type: 'avito_item_archived',
+        title: `Объявление снято: «${it.title}»`,
+        details: `${it.category} · ${it.region}`,
+      });
+    }
+  }
+  // Изменённые
+  for (const [id, oldIt] of prevById) {
+    const newIt = nextById.get(id);
+    if (!newIt) continue;
+    const changes: string[] = [];
+    if (oldIt.currentBid !== newIt.currentBid && newIt.currentBid > 0) {
+      changes.push(`ставка ${oldIt.currentBid} → ${newIt.currentBid} ₽`);
+    }
+    if (oldIt.price !== newIt.price && newIt.price > 0) {
+      changes.push(`цена ${oldIt.price} → ${newIt.price} ₽`);
+    }
+    if (oldIt.title !== newIt.title) {
+      changes.push(`заголовок изменён`);
+    }
+    if (oldIt.status !== newIt.status) {
+      changes.push(`статус ${oldIt.status} → ${newIt.status}`);
+    }
+    if (changes.length > 0) {
+      out.push({
+        timestamp: ts,
+        type: 'avito_item_edited',
+        title: `«${newIt.title}»: ${changes.join(', ')}`,
+        details: `Объявление ${id}`,
+        before: { currentBid: oldIt.currentBid, price: oldIt.price, status: oldIt.status, title: oldIt.title },
+        after: { currentBid: newIt.currentBid, price: newIt.price, status: newIt.status, title: newIt.title },
+      });
+    }
+  }
+  return out;
+}
+
 function buildMirror(acc: AccountData) {
   return {
     items: acc.items,
@@ -212,6 +282,7 @@ export const useStore = create<Store>((set, get) => {
     integration: defaultIntegration,
     adapter,
     balance: null,
+    accountCharges: [],
 
     bootstrap: async () => {
       // ─── Supabase режим ───
@@ -466,9 +537,33 @@ export const useStore = create<Store>((set, get) => {
       const acc = get().accounts[id];
       if (!acc) return;
       saveActiveId(id);
-      set({ currentAccountId: id, ...buildMirror(acc), initialized: true });
+      // Сбрасываем balance/charges от предыдущего аккаунта — иначе будут
+      // показаны цифры старого аккаунта до прихода свежих данных.
+      set({
+        currentAccountId: id,
+        ...buildMirror(acc),
+        initialized: true,
+        balance: null,
+        accountCharges: [],
+      });
       adapter.setSettings(acc.integration);
       get().log('account_switched', `Переключение на аккаунт «${acc.name}»`);
+      // Асинхронно подтягиваем баланс и общие расходы для нового аккаунта.
+      // (Только в режиме API — иначе вернётся null/[].)
+      void (async () => {
+        try {
+          const balance = await adapter.fetchBalance();
+          if (balance) set({ balance });
+        } catch (e) {
+          console.warn('[adapter] balance refresh on switch failed:', e);
+        }
+        try {
+          const charges = await adapter.fetchAccountCharges();
+          set({ accountCharges: charges });
+        } catch (e) {
+          console.warn('[adapter] charges refresh on switch failed:', e);
+        }
+      })();
     },
 
     init: async () => {
@@ -753,7 +848,22 @@ export const useStore = create<Store>((set, get) => {
       const id = get().currentAccountId;
       if (!id) return;
       set({ loading: true });
+      // Запоминаем предыдущий снимок объявлений — будем сравнивать после fetch
+      // и логировать изменения как события Авито (новые/снятые/изменённые).
+      const prevItems = get().items;
       const items = await adapter.fetchItems();
+      // Подтянуть ставки CPx и наложить на items.currentBid
+      try {
+        const bids = await adapter.fetchBids();
+        if (bids.size > 0) {
+          for (const it of items) {
+            const b = bids.get(String(it.id));
+            if (b && b > 0) it.currentBid = b;
+          }
+        }
+      } catch (e) {
+        console.warn('[adapter] fetchBids failed:', e);
+      }
       const metrics = await adapter.fetchMetrics(items);
       // Подтягиваем «события из Авито» (история операций, входящие сообщения и т.п.)
       try {
@@ -762,12 +872,29 @@ export const useStore = create<Store>((set, get) => {
       } catch (e) {
         console.warn('[adapter] fetchAvitoEvents failed:', e);
       }
+      // ─── Diff prev vs new items → события в журнал ───
+      // Только если у нас уже был непустой prev snapshot (т.е. не первый reload).
+      try {
+        if (prevItems.length > 0) {
+          const diffEvents = diffItemsToEvents(prevItems, items);
+          if (diffEvents.length > 0) get().ingestAvitoEvents(diffEvents);
+        }
+      } catch (e) {
+        console.warn('[adapter] diffItemsToEvents failed:', e);
+      }
       // Баланс кошелька (real + bonus + CPA-аванс).
       try {
         const balance = await adapter.fetchBalance();
         if (balance) set({ balance });
       } catch (e) {
         console.warn('[adapter] fetchBalance failed:', e);
+      }
+      // Общие расходы аккаунта (рассылки и т.п. без привязки к объявлению).
+      try {
+        const charges = await adapter.fetchAccountCharges();
+        set({ accountCharges: charges });
+      } catch (e) {
+        console.warn('[adapter] fetchAccountCharges failed:', e);
       }
       const accs = { ...get().accounts };
       const acc = accs[id];
