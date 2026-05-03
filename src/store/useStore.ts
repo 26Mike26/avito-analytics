@@ -728,6 +728,22 @@ export const useStore = create<Store>((set, get) => {
         before: { mode: before.mode, userId: before.userId },
         after: { mode: next.mode, userId: next.userId },
       });
+      // ─── Авто-регистрация на прокси: если переключились в API и есть все три креда,
+      // сразу регистрируем у backend, чтобы пользователю не приходилось править .env.
+      if (
+        next.mode === 'api' &&
+        next.userId &&
+        next.clientId &&
+        next.clientSecret
+      ) {
+        void adapter.registerOnProxy().then((r) => {
+          if (!r.ok) {
+            console.warn('[adapter] registerOnProxy failed:', r.message);
+          } else {
+            console.info('[adapter]', r.message);
+          }
+        });
+      }
     },
 
     reloadFromAdapter: async () => {

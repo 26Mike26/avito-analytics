@@ -26,22 +26,63 @@ const {
 
 const AVITO_BASE = 'https://api.avito.ru';
 
-let cachedToken = null;
-let tokenExpiresAt = 0;
+/**
+ * Реестр аккаунтов: userId → { clientId, clientSecret }.
+ * Источников может быть три:
+ *   1. .env — стартовая пара (AVITO_CLIENT_ID/SECRET/USER_ID)
+ *   2. .env с префиксом AVITO_ACC_<USER_ID>_CLIENT_ID / _SECRET
+ *      — для нескольких аккаунтов сразу
+ *   3. Регистрация на лету через POST /api/accounts/register
+ *      (полезно при разработке: фронт сам пушит креды на прокси)
+ *
+ * В проде кладите креды в Supabase / Vault, а сюда подсасывайте при старте.
+ */
+const accountRegistry = new Map();
 
-async function getAccessToken(forceRefresh = false) {
-  if (!forceRefresh && cachedToken && Date.now() < tokenExpiresAt - 60_000) {
-    return cachedToken;
-  }
-  if (!AVITO_CLIENT_ID || !AVITO_CLIENT_SECRET) {
-    throw new Error(
-      'AVITO_CLIENT_ID / AVITO_CLIENT_SECRET не заданы. Заполните backend/.env.'
+if (AVITO_CLIENT_ID && AVITO_CLIENT_SECRET && AVITO_USER_ID) {
+  accountRegistry.set(String(AVITO_USER_ID), {
+    clientId: AVITO_CLIENT_ID,
+    clientSecret: AVITO_CLIENT_SECRET,
+  });
+}
+for (const [k, v] of Object.entries(process.env)) {
+  const m = k.match(/^AVITO_ACC_([^_]+)_CLIENT_ID$/);
+  if (!m) continue;
+  const uid = m[1];
+  const sec = process.env[`AVITO_ACC_${uid}_CLIENT_SECRET`];
+  if (sec) accountRegistry.set(uid, { clientId: v, clientSecret: sec });
+}
+
+/** Кэш токенов: userId → { token, expiresAt }. */
+const tokenCache = new Map();
+
+function getAccountIdFromReq(req) {
+  const fromHeader =
+    req.get('x-avito-account-id') || req.get('x-avito-user-id');
+  if (fromHeader) return String(fromHeader);
+  if (AVITO_USER_ID) return String(AVITO_USER_ID);
+  throw Object.assign(new Error('Не передан X-Avito-Account-Id'), { status: 400 });
+}
+
+async function getAccessTokenFor(accountId, forceRefresh = false) {
+  const id = String(accountId);
+  const creds = accountRegistry.get(id);
+  if (!creds) {
+    throw Object.assign(
+      new Error(
+        `Аккаунт ${id} не зарегистрирован на прокси. Добавьте AVITO_ACC_${id}_CLIENT_ID/SECRET в .env или вызовите POST /api/accounts/register.`
+      ),
+      { status: 404 }
     );
+  }
+  const cached = tokenCache.get(id);
+  if (!forceRefresh && cached && Date.now() < cached.expiresAt - 60_000) {
+    return cached.token;
   }
   const params = new URLSearchParams({
     grant_type: 'client_credentials',
-    client_id: AVITO_CLIENT_ID,
-    client_secret: AVITO_CLIENT_SECRET,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
   });
   const res = await fetch(`${AVITO_BASE}/token`, {
     method: 'POST',
@@ -53,16 +94,33 @@ async function getAccessToken(forceRefresh = false) {
     throw new Error(`Token error ${res.status}: ${text}`);
   }
   const data = await res.json();
-  cachedToken = data.access_token;
-  tokenExpiresAt = Date.now() + (data.expires_in ?? 86400) * 1000;
-  return cachedToken;
+  tokenCache.set(id, {
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in ?? 86400) * 1000,
+  });
+  return data.access_token;
 }
+
+// Регистрация аккаунта на лету (для разработки).
+// В проде защитите этот эндпоинт админ-токеном или уберите вовсе.
+app.post('/api/accounts/register', (req, res) => {
+  const { userId, clientId, clientSecret } = req.body ?? {};
+  if (!userId || !clientId || !clientSecret) {
+    return res
+      .status(400)
+      .json({ error: 'Нужны поля userId, clientId, clientSecret' });
+  }
+  accountRegistry.set(String(userId), { clientId, clientSecret });
+  tokenCache.delete(String(userId));
+  res.json({ ok: true, registered: String(userId) });
+});
 
 /**
  * Универсальный fetch с авто-обновлением токена при 401.
+ * Креды выбираются по `accountId` (берётся из X-Avito-Account-Id или из .env).
  */
-async function avitoFetch(path, init = {}, retried = false) {
-  const token = await getAccessToken(retried);
+async function avitoFetch(accountId, path, init = {}, retried = false) {
+  const token = await getAccessTokenFor(accountId, retried);
   const res = await fetch(`${AVITO_BASE}${path}`, {
     ...init,
     headers: {
@@ -81,7 +139,7 @@ async function avitoFetch(path, init = {}, retried = false) {
   }
   // 401 — токен истёк, обновим и повторим один раз
   if (res.status === 401 && !retried) {
-    return avitoFetch(path, init, true);
+    return avitoFetch(accountId, path, init, true);
   }
   if (!res.ok) {
     const err = new Error(`Avito API ${res.status} ${path}`);
@@ -92,207 +150,203 @@ async function avitoFetch(path, init = {}, retried = false) {
   return body;
 }
 
+/** Маленький помощник: достаёт accountId из заголовка и оборачивает любые ошибки. */
+function withAcc(handler) {
+  return async (req, res) => {
+    try {
+      const accountId = getAccountIdFromReq(req);
+      await handler(accountId, req, res);
+    } catch (e) {
+      res
+        .status(e.status ?? 500)
+        .json({ error: e.message, body: e.body });
+    }
+  };
+}
+
 // ─────────────────────────── Системные ───────────────────────────
 
-app.get('/api/health', async (_req, res) => {
-  try {
-    await getAccessToken();
-    res.json({ ok: true, message: 'Подключение к Avito API работает.' });
-  } catch (e) {
-    res.status(500).json({ ok: false, message: e.message });
-  }
+app.get('/api/health', withAcc(async (accountId, _req, res) => {
+  await getAccessTokenFor(accountId);
+  res.json({
+    ok: true,
+    message: `Подключение к Avito API работает (аккаунт ${accountId}).`,
+  });
+}));
+
+// Список зарегистрированных аккаунтов (без секретов).
+app.get('/api/accounts', (_req, res) => {
+  res.json({
+    accounts: Array.from(accountRegistry.entries()).map(([id, c]) => ({
+      userId: id,
+      clientId: c.clientId,
+    })),
+  });
 });
 
 // ─────────────────────────── Account / User ──────────────────────
 // Раздел: user, accounts-hierarchy
 
-app.get('/api/account/self', async (_req, res) => {
-  try {
-    res.json(await avitoFetch('/core/v1/accounts/self'));
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/account/self', withAcc(async (accountId, _req, res) => {
+  res.json(await avitoFetch(accountId, '/core/v1/accounts/self'));
+}));
 
-app.get('/api/account/balance', async (_req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    res.json(await avitoFetch(`/core/v1/accounts/${AVITO_USER_ID}/balance/`));
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/account/balance', withAcc(async (accountId, _req, res) => {
+  res.json(
+    await avitoFetch(accountId, `/core/v1/accounts/${accountId}/balance/`)
+  );
+}));
 
-app.get('/api/account/operations', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    const { dateFrom, dateTo } = req.query;
-    const qs = new URLSearchParams();
-    if (dateFrom) qs.set('dateTimeFrom', String(dateFrom));
-    if (dateTo) qs.set('dateTimeTo', String(dateTo));
-    res.json(
-      await avitoFetch(
-        `/core/v1/accounts/operations_history/?${qs.toString()}`,
-        { method: 'POST' }
-      )
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/account/operations', withAcc(async (accountId, req, res) => {
+  const { dateFrom, dateTo } = req.query;
+  const qs = new URLSearchParams();
+  if (dateFrom) qs.set('dateTimeFrom', String(dateFrom));
+  if (dateTo) qs.set('dateTimeTo', String(dateTo));
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/core/v1/accounts/operations_history/?${qs.toString()}`,
+      { method: 'POST' }
+    )
+  );
+}));
 
 // ─────────────────────────── Items / Объявления ──────────────────
 // Раздел: item
 
-app.get('/api/items', async (req, res) => {
-  try {
-    const { status = 'active', per_page = 25, page = 1 } = req.query;
-    const qs = new URLSearchParams({
-      per_page: String(per_page),
-      page: String(page),
-      status: String(status),
-    });
-    res.json(await avitoFetch(`/core/v1/items?${qs.toString()}`));
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/items', withAcc(async (accountId, req, res) => {
+  const { status = 'active', per_page = 25, page = 1 } = req.query;
+  const qs = new URLSearchParams({
+    per_page: String(per_page),
+    page: String(page),
+    status: String(status),
+  });
+  res.json(await avitoFetch(accountId, `/core/v1/items?${qs.toString()}`));
+}));
 
-app.get('/api/items/:id', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    res.json(await avitoFetch(`/core/v1/accounts/${AVITO_USER_ID}/items/${req.params.id}/`));
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/items/:id', withAcc(async (accountId, req, res) => {
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/core/v1/accounts/${accountId}/items/${req.params.id}/`
+    )
+  );
+}));
 
 // ─────────────────────────── Stats / Аналитика ───────────────────
 // Раздел: item (статистика)
 
-app.post('/api/stats/items', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    const { dateFrom, dateTo, itemIds, fields } = req.body;
-    res.json(
-      await avitoFetch(`/stats/v1/accounts/${AVITO_USER_ID}/items`, {
+app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
+  const { dateFrom, dateTo, itemIds, fields } = req.body;
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/stats/v1/accounts/${accountId}/items`,
+      {
         method: 'POST',
         body: JSON.stringify({
           dateFrom,
           dateTo,
           itemIds: itemIds ?? [],
-          fields: fields ?? ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
+          fields:
+            fields ?? ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
         }),
-      })
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+      }
+    )
+  );
+}));
 
-app.get('/api/stats/calls', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    const { dateFrom, dateTo } = req.query;
-    const qs = new URLSearchParams();
-    if (dateFrom) qs.set('dateFrom', String(dateFrom));
-    if (dateTo) qs.set('dateTo', String(dateTo));
-    res.json(
-      await avitoFetch(`/stats/v1/accounts/${AVITO_USER_ID}/calls/stats?${qs.toString()}`)
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/stats/calls', withAcc(async (accountId, req, res) => {
+  const { dateFrom, dateTo } = req.query;
+  const qs = new URLSearchParams();
+  if (dateFrom) qs.set('dateFrom', String(dateFrom));
+  if (dateTo) qs.set('dateTo', String(dateTo));
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/stats/v1/accounts/${accountId}/calls/stats?${qs.toString()}`
+    )
+  );
+}));
 
 // ─────────────────────────── Promotion / Продвижение ─────────────
 // Раздел: promotion, cpxpromo, autostrategy
 
-app.get('/api/promotion/services', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    const itemIds = req.query.itemIds;
-    const qs = new URLSearchParams();
-    if (itemIds) qs.set('itemIds', String(itemIds));
-    res.json(
-      await avitoFetch(`/core/v1/accounts/${AVITO_USER_ID}/promotion/list/?${qs.toString()}`)
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/promotion/services', withAcc(async (accountId, req, res) => {
+  const itemIds = req.query.itemIds;
+  const qs = new URLSearchParams();
+  if (itemIds) qs.set('itemIds', String(itemIds));
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/core/v1/accounts/${accountId}/promotion/list/?${qs.toString()}`
+    )
+  );
+}));
 
 // CPA-цена целевого действия — установка / получение
-app.get('/api/cpx/bids', async (_req, res) => {
-  try {
-    res.json(await avitoFetch('/cpxpromo/1/bids/get'));
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/cpx/bids', withAcc(async (accountId, _req, res) => {
+  res.json(await avitoFetch(accountId, '/cpxpromo/1/bids/get'));
+}));
 
-app.post('/api/cpx/bids/manual', async (req, res) => {
-  try {
-    res.json(
-      await avitoFetch('/cpxpromo/1/bids/set', {
-        method: 'POST',
-        body: JSON.stringify(req.body),
-      })
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.post('/api/cpx/bids/manual', withAcc(async (accountId, req, res) => {
+  res.json(
+    await avitoFetch(accountId, '/cpxpromo/1/bids/set', {
+      method: 'POST',
+      body: JSON.stringify(req.body),
+    })
+  );
+}));
 
 // ─────────────────────────── Messenger / Чаты ────────────────────
 // Раздел: messenger
-// Listing chats (v2) и отправка сообщений (v1) — см. _api-ref/references/sections/messenger.md
 
-app.get('/api/messenger/chats', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    const { limit = 50, offset = 0, unread_only } = req.query;
-    const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-    if (unread_only) qs.set('unread_only', 'true');
-    res.json(
-      await avitoFetch(`/messenger/v2/accounts/${AVITO_USER_ID}/chats?${qs.toString()}`)
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.get('/api/messenger/chats', withAcc(async (accountId, req, res) => {
+  const { limit = 50, offset = 0, unread_only } = req.query;
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (unread_only) qs.set('unread_only', 'true');
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/messenger/v2/accounts/${accountId}/chats?${qs.toString()}`
+    )
+  );
+}));
 
-app.post('/api/messenger/chats/:chatId/message', async (req, res) => {
-  try {
-    if (!AVITO_USER_ID) throw new Error('AVITO_USER_ID не задан');
-    res.json(
-      await avitoFetch(
-        `/messenger/v1/accounts/${AVITO_USER_ID}/chats/${req.params.chatId}/messages`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            type: 'text',
-            message: { text: req.body?.text ?? '' },
-          }),
-        }
-      )
-    );
-  } catch (e) {
-    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
-  }
-});
+app.post('/api/messenger/chats/:chatId/message', withAcc(async (accountId, req, res) => {
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/messenger/v1/accounts/${accountId}/chats/${req.params.chatId}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'text',
+          message: { text: req.body?.text ?? '' },
+        }),
+      }
+    )
+  );
+}));
 
 // ─────────────────────────── Старт ───────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`Avito proxy: http://localhost:${PORT}`);
-  console.log(
-    AVITO_CLIENT_ID
-      ? '✓ Креденшелы загружены из .env'
-      : '⚠ .env пустой — токен не будет получен.'
-  );
+  if (accountRegistry.size === 0) {
+    console.log(
+      '⚠ Реестр аккаунтов пуст. Добавьте AVITO_CLIENT_ID/SECRET/USER_ID в .env\n' +
+        '  или зарегистрируйте аккаунт через POST /api/accounts/register.'
+    );
+  } else {
+    console.log(`✓ Зарегистрировано аккаунтов: ${accountRegistry.size}`);
+    for (const [id] of accountRegistry) console.log(`    • userId=${id}`);
+  }
+  console.log('Все ручки требуют заголовок X-Avito-Account-Id (или AVITO_USER_ID в .env).');
   console.log('Эндпоинты:');
   console.log('  GET  /api/health');
+  console.log('  GET  /api/accounts');
+  console.log('  POST /api/accounts/register   { userId, clientId, clientSecret }');
   console.log('  GET  /api/account/self');
   console.log('  GET  /api/account/balance');
   console.log('  GET  /api/account/operations?dateFrom=...&dateTo=...');

@@ -146,9 +146,11 @@ export default function Settings() {
               >
                 developers.avito.ru
               </a>{' '}
-              и получите Client ID / Client Secret. Прямые запросы к API из браузера не работают
-              (CORS и риск утечки секретов) — нужен серверный прокси (см. папку{' '}
-              <code>backend/</code> в проекте).
+              и получите Client ID / Client Secret. Включите scope <code>items:info</code>,{' '}
+              <code>stats:read</code>, <code>user_balance:read</code>,{' '}
+              <code>user_operations:read</code>. После заполнения трёх полей и нажатия
+              «Сохранить» аккаунт автоматически зарегистрируется на серверном прокси,
+              правка <code>backend/.env</code> вручную не требуется.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Client ID">
