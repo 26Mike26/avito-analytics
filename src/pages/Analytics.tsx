@@ -36,7 +36,7 @@ export default function Analytics() {
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const kpi = useStore((s) => s.kpi);
 
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
+  const [period, setPeriod] = useState(() => lastNDaysRange(270));
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');

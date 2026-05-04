@@ -268,14 +268,14 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
           dateTo,
           itemIds: itemIds ?? [],
           fields:
-            fields ?? ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
+            fields ?? ['uniqViews', 'uniqContacts', 'uniqFavorites'],
         }),
       }
     )
   );
 }));
 
-// In-memory кэш для /stats/v2 — 60 секунд per (accountId, dateFrom, dateTo, itemIds).
+// In-memory кэш для /stats/v2 — 60 секунд per (accountId, dateFrom, dateTo, grouping, filter).
 // Avito жёстко ограничивает rate (429), кэш экономит запросы.
 const v2Cache = new Map(); // key → { ts, data }
 const V2_TTL_MS = 60_000;
@@ -284,26 +284,54 @@ function v2CacheKey(accountId, body) {
     accountId,
     body.dateFrom,
     body.dateTo,
-    (body.itemIds ?? []).join(','),
-    (body.fields ?? []).join(','),
-    body.periodGrouping ?? '',
+    body.grouping ?? '',
+    (body.metrics ?? []).join(','),
+    JSON.stringify(body.filter ?? {}),
+    JSON.stringify(body.sort ?? {}),
+    body.limit ?? '',
+    body.offset ?? '',
   ].join('|');
 }
 
-// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent).
+// /stats/v2 — профильная аналитика: умеет отдавать расходы по объявлениям
+// (spending, presenceSpending, promoSpending, allSpending) в копейках.
 // Не у всех тарифов работает. Если Avito возвращает 400/404/429/500 —
 // проксируем как HTTP 200 с {_v2_unavailable: true}, чтобы Network не светилась.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
-  const { dateFrom, dateTo, itemIds, fields } = req.body;
-  // ВАЖНО: Avito v2 enum поля = uniqViews, contacts, favorites, spent.
-  // Поля «cost» НЕТ. Используем только spent.
-  const realFields = fields ?? ['uniqViews', 'contacts', 'favorites', 'spent'];
+  const {
+    dateFrom,
+    dateTo,
+    itemIds,
+    fields,
+    metrics,
+    grouping = 'item',
+    filter,
+    sort,
+    limit = 1000,
+    offset = 0,
+  } = req.body;
+  const itemFilter = Array.isArray(itemIds) && itemIds.length > 0
+    ? { itemIds: itemIds.map(Number).filter(Number.isFinite) }
+    : undefined;
+  const realMetrics = metrics ??
+    fields ?? [
+      'views',
+      'contacts',
+      'favorites',
+      'spending',
+      'presenceSpending',
+      'promoSpending',
+      'allSpending',
+    ];
   const body = {
     dateFrom,
     dateTo,
-    itemIds: itemIds ?? [],
-    fields: realFields,
-    periodGrouping: 'day',
+    grouping,
+    metrics: realMetrics,
+    limit: Math.min(Number(limit) || 1000, 1000),
+    offset: Math.max(Number(offset) || 0, 0),
+    ...(filter || itemFilter ? { filter: { ...(filter ?? {}), ...(itemFilter ?? {}) } } : {}),
+    ...(sort ? { sort } : {}),
   };
   // Проверяем кэш
   const key = v2CacheKey(accountId, body);
@@ -446,7 +474,7 @@ app.listen(PORT, () => {
   console.log('  GET  /api/items?status=active&per_page=25');
   console.log('  GET  /api/items/:id');
   console.log('  POST /api/stats/items   { dateFrom, dateTo, itemIds, fields }');
-  console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, fields } — опц., per-item spend');
+  console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, metrics, grouping } — опц., per-item spend');
   console.log('  GET  /api/stats/calls?dateFrom=...&dateTo=...');
   console.log('  GET  /api/promotion/services?itemIds=...');
   console.log('  GET  /api/cpx/bids');

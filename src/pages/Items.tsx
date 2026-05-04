@@ -56,7 +56,7 @@ export default function Items() {
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
   const [efficiency, setEfficiency] = useState<EfficiencyFilter>('all');
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
+  const [period, setPeriod] = useState(() => lastNDaysRange(270));
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 

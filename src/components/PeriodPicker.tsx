@@ -29,6 +29,8 @@ const PRESETS: Array<{ label: string; range: () => PeriodValue }> = [
   { label: '14 дней', range: () => lastNDaysRange(14) },
   { label: '30 дней', range: () => lastNDaysRange(30) },
   { label: '90 дней', range: () => lastNDaysRange(90) },
+  { label: '180 дней', range: () => lastNDaysRange(180) },
+  { label: '270 дней', range: () => lastNDaysRange(270) },
   {
     label: 'Этот месяц',
     range: () => {

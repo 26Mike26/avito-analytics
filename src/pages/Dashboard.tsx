@@ -41,7 +41,7 @@ export default function Dashboard() {
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
 
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
+  const [period, setPeriod] = useState(() => lastNDaysRange(270));
 
   // Items с реальными суммами за выбранный период.
   // accountCharges передаём, чтобы CPx-аванс распределился по объявлениям

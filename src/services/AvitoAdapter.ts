@@ -118,6 +118,33 @@ const PROXY_BASE = (import.meta.env?.VITE_AVITO_PROXY_URL ?? '')
   .toString()
   .replace(/\/$/, '');
 
+const AVITO_STATS_LOOKBACK_DAYS = 270;
+
+const STATS_V2_SPEND_METRICS = [
+  'allSpending',
+  'spending',
+  'presenceSpending',
+  'promoSpending',
+  'restSpending',
+  'commission',
+  'spendingBonus',
+] as const;
+
+const STATS_V2_PROFILE_METRICS = [
+  'views',
+  'contacts',
+  'favorites',
+  ...STATS_V2_SPEND_METRICS,
+];
+
+type StatsV2SpendByItem = {
+  itemId: string;
+  views: number;
+  contacts: number;
+  favorites: number;
+  spend: number;
+};
+
 /**
  * Универсальный fetch к backend-прокси. Прокидывает accountId / userId
  * в заголовках, чтобы прокси мог использовать креды конкретного аккаунта.
@@ -153,6 +180,83 @@ async function proxyFetch<T>(
   return body as T;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function num(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/\s/g, '').replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function firstPositive(...values: unknown[]): number {
+  for (const value of values) {
+    const parsed = num(value);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function pickItemId(row: Record<string, unknown>): string | null {
+  const item = asRecord(row.item);
+  const dimensions = asRecord(row.dimensions);
+  const grouping = asRecord(row.grouping);
+  const candidates = [
+    row.itemId,
+    row.item_id,
+    row.avitoId,
+    row.avito_id,
+    row.id,
+    item?.itemId,
+    item?.id,
+    dimensions?.itemId,
+    dimensions?.item_id,
+    grouping?.itemId,
+    grouping?.item_id,
+  ];
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const id = String(candidate).trim();
+    if (id) return id;
+  }
+  return null;
+}
+
+function v2Metric(row: Record<string, unknown>, key: string): unknown {
+  const metrics = asRecord(row.metrics);
+  const values = asRecord(row.values);
+  const data = asRecord(row.data);
+  return row[key] ?? metrics?.[key] ?? values?.[key] ?? data?.[key];
+}
+
+function extractStatsV2Rows(data: unknown): Record<string, unknown>[] {
+  const root = asRecord(data);
+  const result = asRecord(root?.result);
+  const candidates = [
+    result?.groupings,
+    result?.items,
+    result?.data,
+    root?.groupings,
+    root?.items,
+    root?.data,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap((row) => {
+        const record = asRecord(row);
+        return record ? [record] : [];
+      });
+    }
+  }
+  return [];
+}
+
 export class AvitoAdapter implements IAvitoAdapter {
   constructor(private settings: IntegrationSettings) {}
 
@@ -167,23 +271,23 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
-   * Пробует /stats/v2 — он МОЖЕТ возвращать per-item spend/cost.
-   * Возвращает пустой массив, если ручка не работает / 404 / 429 / отсутствуют поля.
-   * Так UI спокойно откатывается на v1+operations.
+   * Пробует /stats/v2 профильной аналитики. В отличие от старых счётчиков
+   * /stats/v1, здесь расходы приходят в копейках по полям spending /
+   * presenceSpending / promoSpending / allSpending.
    */
-  private async tryFetchStatsV2(
+  private async fetchStatsV2SpendByItem(
     itemIds: number[],
     dateFrom: string,
     dateTo: string
-  ): Promise<ItemMetrics[]> {
+  ): Promise<Map<string, StatsV2SpendByItem>> {
     this.lastMetricsHadV2Spend = false;
-    if (!PROXY_BASE) return [];
-    const out: ItemMetrics[] = [];
+    const out = new Map<string, StatsV2SpendByItem>();
+    if (!PROXY_BASE) return out;
     try {
       for (let i = 0; i < itemIds.length; i += 200) {
         const slice = itemIds.slice(i, i + 200);
         const data = await proxyFetch<{
-          result?: { items?: unknown[] };
+          result?: { groupings?: unknown[]; items?: unknown[]; data?: unknown[] };
           _v2_unavailable?: boolean;
           error?: string;
           status?: number;
@@ -194,9 +298,10 @@ export class AvitoAdapter implements IAvitoAdapter {
             dateFrom,
             dateTo,
             itemIds: slice,
-            // Avito v2 enum: uniqViews, contacts, favorites, spent. Поля cost нет.
-            fields: ['uniqViews', 'contacts', 'favorites', 'spent'],
-            periodGrouping: 'day',
+            grouping: 'item',
+            metrics: STATS_V2_PROFILE_METRICS,
+            limit: 1000,
+            offset: 0,
           }),
           headers: { 'Content-Type': 'application/json' },
         });
@@ -206,42 +311,129 @@ export class AvitoAdapter implements IAvitoAdapter {
             '[AvitoAdapter] /stats/v2 недоступен у этого аккаунта/тарифа:',
             data.error ?? `status ${data.status}`
           );
-          return [];
+          return out;
         }
-        const list = (data.result?.items ?? []) as Array<{
-          itemId?: number | string;
-          stats?: Array<{
-            date: string;
-            views?: number;
-            uniqViews?: number;
-            contacts?: number;
-            favorites?: number;
-            spent?: number;
-          }>;
-        }>;
-        for (const row of list) {
-          const id = String(row.itemId);
-          for (const s of row.stats ?? []) {
-            const spend = Number(s.spent ?? 0);
-            out.push({
-              itemId: id,
-              date: s.date,
-              views: Number(s.uniqViews ?? s.views ?? 0),
-              contacts: Number(s.contacts ?? 0),
-              favorites: Number(s.favorites ?? 0),
-              spend,
-              bid: 0,
-            });
-          }
+        for (const row of extractStatsV2Rows(data)) {
+          const itemId = pickItemId(row);
+          if (!itemId) continue;
+          const componentSpendingKopecks = [
+            'presenceSpending',
+            'promoSpending',
+            'restSpending',
+            'commission',
+            'spendingBonus',
+          ].reduce((sum, key) => sum + num(v2Metric(row, key)), 0);
+          const spendingKopecks = firstPositive(
+            v2Metric(row, 'allSpending'),
+            v2Metric(row, 'spending'),
+            componentSpendingKopecks
+          );
+          const legacySpentRub = firstPositive(v2Metric(row, 'spent'));
+          const spend = spendingKopecks > 0
+            ? Math.round(spendingKopecks / 100)
+            : Math.round(legacySpentRub);
+          const prev = out.get(itemId) ?? {
+            itemId,
+            views: 0,
+            contacts: 0,
+            favorites: 0,
+            spend: 0,
+          };
+          prev.views += num(v2Metric(row, 'views') ?? v2Metric(row, 'uniqViews'));
+          prev.contacts += num(v2Metric(row, 'contacts') ?? v2Metric(row, 'uniqContacts'));
+          prev.favorites += num(v2Metric(row, 'favorites') ?? v2Metric(row, 'uniqFavorites'));
+          prev.spend += spend;
+          out.set(itemId, prev);
         }
       }
-      // Считаем что v2 «дал spend» если хотя бы одна запись с spend > 0
-      this.lastMetricsHadV2Spend = out.some((m) => m.spend > 0);
+      this.lastMetricsHadV2Spend = Array.from(out.values()).some((m) => m.spend > 0);
       return out;
     } catch (e) {
       console.info('[AvitoAdapter] /stats/v2 fallback на v1:', e);
-      return [];
+      return out;
     }
+  }
+
+  private applyStatsV2Spend(
+    metrics: ItemMetrics[],
+    v2SpendByItem: Map<string, StatsV2SpendByItem>,
+    fallbackDate: string
+  ) {
+    let applied = 0;
+    for (const [itemId, v2] of v2SpendByItem.entries()) {
+      if (v2.spend <= 0) continue;
+      const rows = metrics.filter((m) => m.itemId === itemId);
+      if (rows.length === 0) {
+        metrics.push({
+          itemId,
+          date: fallbackDate,
+          views: v2.views,
+          contacts: v2.contacts,
+          favorites: v2.favorites,
+          spend: v2.spend,
+          bid: 0,
+        });
+        applied++;
+        continue;
+      }
+      const weights = rows.map((m) => {
+        const activity = m.views + m.contacts * 20 + m.favorites * 5;
+        return activity > 0 ? activity : 1;
+      });
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      let allocated = 0;
+      rows.forEach((row, index) => {
+        const share = index === rows.length - 1
+          ? v2.spend - allocated
+          : Math.round((v2.spend * weights[index]) / totalWeight);
+        row.spend = Math.max(0, share);
+        allocated += share;
+      });
+      applied++;
+    }
+    if (applied > 0) {
+      this.lastMetricsHadV2Spend = true;
+      console.info(`[AvitoAdapter] /stats/v2 применил точный расход по ${applied} объявлениям.`);
+    }
+  }
+
+  private async fetchOperationsHistory(
+    dateFrom: string,
+    dateTo: string
+  ): Promise<Array<Record<string, unknown>>> {
+    const out: Array<Record<string, unknown>> = [];
+    const cursor = new Date(`${dateFrom}T00:00:00Z`);
+    const end = new Date(`${dateTo}T23:59:59Z`);
+    const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+    while (cursor <= end) {
+      const chunkStart = new Date(cursor);
+      const chunkEnd = new Date(cursor);
+      chunkEnd.setUTCDate(chunkEnd.getUTCDate() + 6);
+      chunkEnd.setUTCHours(23, 59, 59, 999);
+      if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+
+      const opsData = await proxyFetch<{
+        result?: { operations?: Array<Record<string, unknown>> };
+        operations?: unknown[];
+      }>(
+        `/api/account/operations?dateFrom=${encodeURIComponent(
+          iso(chunkStart)
+        )}&dateTo=${encodeURIComponent(iso(chunkEnd))}`,
+        this.headers()
+      );
+      out.push(
+        ...(opsData.result?.operations ??
+          (opsData.operations as Array<Record<string, unknown>>) ??
+          [])
+      );
+
+      cursor.setTime(chunkEnd.getTime());
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      cursor.setUTCHours(0, 0, 0, 0);
+    }
+
+    return out;
   }
 
   /** Заголовки с идентификаторами аккаунта для прокси. */
@@ -334,7 +526,7 @@ export class AvitoAdapter implements IAvitoAdapter {
       try {
         const today = new Date();
         const past = new Date(today);
-        past.setDate(today.getDate() - 30);
+        past.setDate(today.getDate() - AVITO_STATS_LOOKBACK_DAYS);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
         const itemIds = items
           .map((i) => Number(i.id))
@@ -344,18 +536,17 @@ export class AvitoAdapter implements IAvitoAdapter {
           return [];
         }
 
-        // ─── Сначала пробуем v2 — там МОЖЕТ быть per-item spent.
-        // Если получилось — используем его и НЕ распределяем CPx-пул второй раз.
-        // Защищаемся от 429/ошибок/неполных данных — fallback на v1.
-        const v2Result = await this.tryFetchStatsV2(itemIds, fmt(past), fmt(today));
-        const v2HasSpend =
-          v2Result.length > 0 && v2Result.some((m) => m.spend > 0);
-        if (v2HasSpend) {
-          console.info(
-            `[AvitoAdapter] /stats/v2 вернул per-item spend — используем его (${v2Result.length} строк).`
-          );
-          return v2Result;
-        }
+        // ─── Сначала пробуем v2: он даёт расходы по объявлениям в копейках.
+        // Дневные views/contacts/favorites оставляем из v1, чтобы графики не
+        // превращались в одну строку totals, а v2 накладываем сверху как расход.
+        const v2SpendByItem = await this.fetchStatsV2SpendByItem(
+          itemIds,
+          fmt(past),
+          fmt(today)
+        );
+        const v2HasSpend = Array.from(v2SpendByItem.values()).some(
+          (m) => m.spend > 0
+        );
 
         // Avito API ограничивает запрос размером 200 itemIds — режем на пачки.
         const out: ItemMetrics[] = [];
@@ -370,9 +561,9 @@ export class AvitoAdapter implements IAvitoAdapter {
                 dateFrom: fmt(past),
                 dateTo: fmt(today),
                 itemIds: slice,
-                // Avito API enum v1: views, uniqViews, contacts, uniqContacts,
-                // favorites, uniqFavorites. Поля «spent» в v1 нет.
-                fields: ['uniqViews', 'contacts', 'favorites'],
+                // Avito API v1: используем актуальные uniq-поля.
+                // Поля «spent» в v1 нет.
+                fields: ['uniqViews', 'uniqContacts', 'uniqFavorites'],
                 periodGrouping: 'day',
               }),
               headers: { 'Content-Type': 'application/json' },
@@ -385,7 +576,9 @@ export class AvitoAdapter implements IAvitoAdapter {
               views?: number;
               uniqViews?: number;
               contacts?: number;
+              uniqContacts?: number;
               favorites?: number;
+              uniqFavorites?: number;
               spent?: number;
             }>;
           }>;
@@ -397,8 +590,8 @@ export class AvitoAdapter implements IAvitoAdapter {
                 date: s.date,
                 // uniqViews приоритетнее, fallback на views
                 views: Number(s.uniqViews ?? s.views ?? 0),
-                contacts: Number(s.contacts ?? 0),
-                favorites: Number(s.favorites ?? 0),
+                contacts: Number(s.uniqContacts ?? s.contacts ?? 0),
+                favorites: Number(s.uniqFavorites ?? s.favorites ?? 0),
                 spend: Number(s.spent ?? 0),
                 bid: 0,
               });
@@ -411,26 +604,10 @@ export class AvitoAdapter implements IAvitoAdapter {
           );
         }
         // ─── Подтянем расходы из operations_history и распределим по item+date.
-        // Avito не отдаёт spent в /stats/v1/items, но в operations_history
+        // Avito не отдаёт расходы в /stats/v1/items, но в operations_history
         // у каждого списания за услугу (vas/cpa/cpc/cpx) есть itemId.
         try {
-          // Avito ждёт ISO 8601 с временем (dateTimeFrom/dateTimeTo).
-          const dtFrom = `${fmt(past)}T00:00:00Z`;
-          const dtTo = `${fmt(today)}T23:59:59Z`;
-          const opsData = await proxyFetch<{
-            result?: {
-              operations?: Array<Record<string, unknown>>;
-            };
-            operations?: unknown[];
-          }>(
-            `/api/account/operations?dateFrom=${encodeURIComponent(
-              dtFrom
-            )}&dateTo=${encodeURIComponent(dtTo)}`,
-            this.headers()
-          );
-          const ops = (opsData.result?.operations ??
-            (opsData.operations as Array<Record<string, unknown>>) ??
-            []);
+          const ops = await this.fetchOperationsHistory(fmt(past), fmt(today));
           const spendByKey = new Map<string, number>();
           let chargesCount = 0;
           for (const op of ops) {
@@ -492,6 +669,9 @@ export class AvitoAdapter implements IAvitoAdapter {
             '[AvitoAdapter] Не удалось подтянуть расходы из operations_history:',
             e
           );
+        }
+        if (v2HasSpend) {
+          this.applyStatsV2Spend(out, v2SpendByItem, fmt(today));
         }
         return out;
       } catch (e) {
@@ -685,18 +865,10 @@ export class AvitoAdapter implements IAvitoAdapter {
     try {
       const today = new Date();
       const past = new Date(today);
-      past.setDate(today.getDate() - 30);
-      const dtFrom = opts?.dateFrom ?? `${past.toISOString().slice(0, 10)}T00:00:00Z`;
-      const dtTo = opts?.dateTo ?? `${today.toISOString().slice(0, 10)}T23:59:59Z`;
-      const data = await proxyFetch<{
-        result?: { operations?: Array<Record<string, unknown>> };
-      }>(
-        `/api/account/operations?dateFrom=${encodeURIComponent(
-          dtFrom
-        )}&dateTo=${encodeURIComponent(dtTo)}`,
-        this.headers()
-      );
-      const ops = data.result?.operations ?? [];
+      past.setDate(today.getDate() - AVITO_STATS_LOOKBACK_DAYS);
+      const fromDate = (opts?.dateFrom ?? past.toISOString().slice(0, 10)).slice(0, 10);
+      const toDate = (opts?.dateTo ?? today.toISOString().slice(0, 10)).slice(0, 10);
+      const ops = await this.fetchOperationsHistory(fromDate, toDate);
       const out: AccountCharge[] = [];
       for (const op of ops) {
         const cls = this.classifyOp(op);
