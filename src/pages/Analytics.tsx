@@ -3,18 +3,17 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Legend,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { Layout } from '../components/Layout';
+import { PeriodPicker } from '../components/PeriodPicker';
+import { Badge } from '../components/Badge';
 import { useStore } from '../store/useStore';
 import {
   aggregateMetricsByDate,
@@ -24,58 +23,79 @@ import {
   formatNumber,
   formatPercent,
   formatRub,
+  itemsInDateRange,
+  lastNDaysRange,
   regionAverages,
 } from '../lib/analytics';
 import { ProgressBar } from '../components/ProgressBar';
 
-const palette = [
-  '#FF6A00',
-  '#FF9447',
-  '#60a5fa',
-  '#34d399',
-  '#f59e0b',
-  '#f87171',
-  '#a78bfa',
-  '#22d3ee',
-];
-
 export default function Analytics() {
-  const items = useStore((s) => s.items);
+  const allItems = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
+  const accountCharges = useStore((s) => s.accountCharges);
   const kpi = useStore((s) => s.kpi);
 
-  const [period, setPeriod] = useState<'7' | '14' | '30'>('30');
+  const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
-  const [source, setSource] = useState<'all' | 'demo' | 'api' | 'csv'>('all');
+
+  // Items с пересчётом расхода за период (CPx-аванс распределён по показам).
+  const itemsForPeriod = useMemo(
+    () => itemsInDateRange(allItems, metrics, period.from, period.to, accountCharges),
+    [allItems, metrics, period.from, period.to, accountCharges]
+  );
 
   const categoriesList = useMemo(
-    () => Array.from(new Set(items.map((i) => i.category))).sort(),
-    [items]
+    () => Array.from(new Set(itemsForPeriod.map((i) => i.category))).sort(),
+    [itemsForPeriod]
   );
   const regionsList = useMemo(
-    () => Array.from(new Set(items.map((i) => i.region))).sort(),
-    [items]
+    () => Array.from(new Set(itemsForPeriod.map((i) => i.region))).sort(),
+    [itemsForPeriod]
   );
 
-  const filteredItems = items.filter((i) => {
+  const filteredItems = itemsForPeriod.filter((i) => {
     if (category !== 'all' && i.category !== category) return false;
     if (region !== 'all' && i.region !== region) return false;
     if (status !== 'all' && i.status !== status) return false;
     return true;
   });
 
-  const days = +period;
-  const lastN = (date: string) => {
-    const d = new Date(date).getTime();
-    const start = new Date('2026-05-01').getTime() - days * 86400000;
-    return d >= start;
-  };
-  const filteredMetrics = metrics.filter(
-    (m) => filteredItems.some((it) => it.id === m.itemId) && lastN(m.date)
+  // Метрики за выбранный период по выбранным items.
+  // Расход в metrics — только per-item VAS из operations (без распределённого CPx),
+  // поэтому к series.spend добавляем долю CPx-пула этого дня пропорционально views.
+  const filteredMetrics = useMemo(
+    () =>
+      metrics.filter(
+        (m) =>
+          filteredItems.some((it) => String(it.id) === String(m.itemId)) &&
+          m.date >= period.from &&
+          m.date <= period.to
+      ),
+    [metrics, filteredItems, period.from, period.to]
   );
-  const series = aggregateMetricsByDate(filteredMetrics);
+  const cpxByDate = useMemo(() => {
+    // Сумма CPx-пополнений по дням за период
+    const m = new Map<string, number>();
+    for (const c of accountCharges) {
+      if (c.date < period.from || c.date > period.to) continue;
+      if (c.kind !== 'promotion_pool' && c.kind !== 'refund') continue;
+      m.set(c.date, (m.get(c.date) ?? 0) + c.amount);
+    }
+    return m;
+  }, [accountCharges, period.from, period.to]);
+  const series = useMemo(() => {
+    const baseSeries = aggregateMetricsByDate(filteredMetrics);
+    // Добавляем к расходу за день распределённый CPx-пул того же дня
+    return baseSeries.map((d) => {
+      const cpxThisDay = cpxByDate.get(d.date) ?? 0;
+      return {
+        ...d,
+        spend: Math.round(d.spend + cpxThisDay),
+      };
+    });
+  }, [filteredMetrics, cpxByDate]);
 
   const stats = calculateAccountStats(filteredItems, kpi);
 
@@ -87,12 +107,18 @@ export default function Analytics() {
     conversion: v.conversion ?? 0,
   }));
   const regData = regionAverages(filteredItems).sort((a, b) => b.spend - a.spend);
-
-  const budgetDistribution = catData.map((d, i) => ({
-    name: d.name,
-    value: d.spend,
-    fill: palette[i % palette.length],
-  }));
+  const ineffectiveCities = useMemo(
+    () =>
+      regData
+        .map((r) => ({
+          ...r,
+          overspend:
+            r.cpl != null && r.cpl > kpi.targetCpl ? r.cpl - kpi.targetCpl : 0,
+        }))
+        .filter((r) => r.overspend > 0)
+        .sort((a, b) => b.spend - a.spend),
+    [regData, kpi.targetCpl]
+  );
 
   const top = [...filteredItems]
     .filter((i) => i.contacts > 0)
@@ -108,44 +134,32 @@ export default function Analytics() {
       title="Аналитика"
       subtitle="Графики и сравнение по объявлениям, категориям и регионам"
     >
-      <div className="card p-3 sm:p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
-        <select className="input" value={period} onChange={(e) => setPeriod(e.target.value as '7' | '14' | '30')}>
-          <option value="7">7 дней</option>
-          <option value="14">14 дней</option>
-          <option value="30">30 дней</option>
-        </select>
-        <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="all">Все категории</option>
-          {categoriesList.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={region} onChange={(e) => setRegion(e.target.value)}>
-          <option value="all">Все регионы</option>
-          {regionsList.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-          <option value="all">Любой статус</option>
-          <option value="active">Активные</option>
-          <option value="paused">Приостановленные</option>
-          <option value="archived">В архиве</option>
-        </select>
-        <select className="input" defaultValue="товары">
-          <option value="товары">Тип: товары</option>
-          <option value="услуги">Тип: услуги</option>
-        </select>
-        <select className="input" value={source} onChange={(e) => setSource(e.target.value as typeof source)}>
-          <option value="all">Все источники</option>
-          <option value="demo">Demo</option>
-          <option value="api">API</option>
-          <option value="csv">CSV</option>
-        </select>
+      <div className="card p-3 sm:p-4 mb-4">
+        <PeriodPicker value={period} onChange={setPeriod} className="mb-3" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
+          <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="all">Все категории</option>
+            {categoriesList.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <select className="input" value={region} onChange={(e) => setRegion(e.target.value)}>
+            <option value="all">Все города</option>
+            {regionsList.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
+            <option value="all">Любой статус</option>
+            <option value="active">Активные</option>
+            <option value="paused">Приостановленные</option>
+            <option value="archived">В архиве</option>
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -220,17 +234,38 @@ export default function Analytics() {
           />
           <KpiBar label="Бюджет" value={stats.budgetUsage} note={`${formatRub(stats.totalSpend)} / ${formatRub(kpi.monthlyBudget)}`} />
         </Card>
-        <Card title="Распределение бюджета по категориям">
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie data={budgetDistribution} dataKey="value" nameKey="name" innerRadius={50} outerRadius={90}>
-                {budgetDistribution.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(v: number) => formatRub(v)} />
-            </PieChart>
-          </ResponsiveContainer>
+        <Card title="Неэффективные города">
+          {ineffectiveCities.length === 0 ? (
+            <div className="text-sm text-ink-400">
+              За выбранный период городов с CPL выше целевого нет — все в норме.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {ineffectiveCities.map((c) => (
+                <div
+                  key={c.region}
+                  className="flex items-center justify-between border border-rose-500/30 bg-rose-500/5 rounded-lg px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white truncate">
+                      {c.region}
+                    </div>
+                    <div className="text-xs text-ink-400">
+                      {formatNumber(c.contacts)} лидов · {formatRub(c.spend)}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs shrink-0 ml-3">
+                    <div className="font-semibold text-rose-300">
+                      {c.cpl != null ? formatRub(c.cpl) : '—'}
+                    </div>
+                    <div className="text-ink-400">
+                      +{formatRub(c.overspend)} от целевого
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
         <Card title="Эффективность по городам">
           <div className="space-y-2">

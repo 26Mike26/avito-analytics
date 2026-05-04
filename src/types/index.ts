@@ -27,6 +27,8 @@ export type AvitoItem = {
   spend: number;
   revenue?: number;
   createdAt: string;
+  /** Ссылка на объявление на Авито (приходит из /core/v1/items в поле url). */
+  url?: string;
 };
 
 export type ItemMetrics = {

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ExternalLink,
   History,
   Lightbulb,
   StickyNote,
@@ -125,11 +126,25 @@ export default function ItemDetail() {
       title={item.title}
       subtitle={`${item.category} · ${item.region} · создано ${item.createdAt}`}
     >
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
         <Link to="/items" className="btn-ghost">
           <ArrowLeft className="w-4 h-4" /> К списку
         </Link>
         <StatusBadge status={item.status} />
+        {/* Если из API известна ссылка — открываем сам Авито в новой вкладке.
+            Если нет (например данные из CSV) — собираем по ID. */}
+        <a
+          href={
+            item.url
+              ? item.url
+              : `https://www.avito.ru/items/${encodeURIComponent(item.id)}`
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-secondary ml-auto"
+        >
+          <ExternalLink className="w-4 h-4" /> Открыть на Авито
+        </a>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

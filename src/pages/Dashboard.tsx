@@ -119,6 +119,17 @@ export default function Dashboard() {
 
   const balanceTotal = balance ? balance.real + balance.bonus : null;
 
+  // Сумма пополнений CPA/CPx-аванса за выбранный период (включая сторно).
+  // Это то, сколько денег пользователь пополнил на CPA-баланс ЗА ВЫБРАННЫЙ
+  // ПЕРИОД (а не накопленный остаток).
+  const cpxTopups = useMemo(
+    () =>
+      chargesInPeriod
+        .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
+        .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod]
+  );
+
   return (
     <Layout
       title="Дашборд аккаунта"
@@ -129,14 +140,14 @@ export default function Dashboard() {
         <PeriodPicker value={period} onChange={setPeriod} />
       </div>
 
-      {/* ─── Баланс кошелька (только если режим API и баланс получен) ─── */}
+      {/* ─── Баланс кошелька + динамика CPA-аванса ─── */}
       {balance && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <BalanceCard
             label="Реальный баланс"
             icon={<Wallet className="w-4 h-4" />}
             value={formatRub(balance.real)}
-            hint="Доступные деньги на счёте Авито"
+            hint="Доступные деньги на счёте Авито (текущий остаток)"
             tone="white"
           />
           <BalanceCard
@@ -146,20 +157,45 @@ export default function Dashboard() {
             hint="Промо-баллы / бонусы Авито"
             tone="violet"
           />
-          <BalanceCard
-            label="Аванс на услуги"
-            icon={<PiggyBank className="w-4 h-4" />}
-            value={balance.advance > 0 ? formatRub(balance.advance) : '—'}
-            hint={
-              balance.advance > 0
-                ? 'Доступно на оплату продвижения и CPA'
-                : 'Аванс не сформирован'
-            }
-            tone="orange"
-          />
+          {/* Третья карточка: разница пополнений CPA-аванса и расхода
+              на рекламу за выбранный период. Если за период пополнили больше
+              чем потратили — баланс CPA вырос (положительное число).
+              Если потратили больше — пользовались остатком прошлого периода. */}
+          {(() => {
+            // расход CPx = всё что мы посчитали как «расход на объявления» в отчёте
+            const advanceDelta = cpxTopups - adsSpend;
+            const sign = advanceDelta > 0 ? '+' : '';
+            const isPositive = advanceDelta > 0;
+            const isNegative = advanceDelta < 0;
+            return (
+              <BalanceCard
+                label="Изменение аванса за период"
+                icon={<PiggyBank className="w-4 h-4" />}
+                value={
+                  cpxTopups === 0 && adsSpend === 0
+                    ? '—'
+                    : `${sign}${formatRub(advanceDelta)}`
+                }
+                hint={
+                  cpxTopups === 0 && adsSpend === 0
+                    ? 'За период не было ни пополнений, ни расхода'
+                    : `Пополнено ${formatRub(cpxTopups)} − израсходовано ${formatRub(
+                        adsSpend
+                      )} = ${
+                        isPositive
+                          ? 'аванс вырос'
+                          : isNegative
+                          ? 'тратили остаток с прошлого периода'
+                          : 'без изменений'
+                      }`
+                }
+                tone="orange"
+              />
+            );
+          })()}
           {balanceTotal != null && (
             <div className="sm:col-span-3 text-xs text-ink-400 -mt-1">
-              Всего на аккаунте:{' '}
+              На счёте сейчас:{' '}
               <span className="text-white font-semibold">
                 {formatRub(balanceTotal + balance.advance)}
               </span>
@@ -433,7 +469,7 @@ export default function Dashboard() {
                       <td className="table-td">
                         {isOverspend ? (
                           <Badge tone="red">
-                            +{formatRub(c.overspend)} к цели
+                            +{formatRub(c.overspend)} от целевого CPL
                           </Badge>
                         ) : c.cpl != null && c.cpl <= kpi.targetCpl ? (
                           <Badge tone="green">в норме</Badge>

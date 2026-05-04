@@ -235,6 +235,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           spend: 0,
           revenue: undefined,
           createdAt: new Date().toISOString().slice(0, 10),
+          url: it.url, // ссылка на сам Авито (для кнопки «Открыть на Авито»)
         }));
       } catch (e) {
         console.warn('[AvitoAdapter] fetchItems API error, fallback на demo:', e);
@@ -668,34 +669,21 @@ export class AvitoAdapter implements IAvitoAdapter {
 
   /**
    * Получить баланс аккаунта Avito.
-   * Делаем 3 параллельных запроса:
-   *   • /api/account/balance        → real + bonus
-   *   • /api/account/cpa-balance    → CPA-аванс через Avito (если ручка работает)
-   *   • /api/account/operations     → fallback: считаем CPA-аванс по сальдо
-   *     (внесения CPA-аванса минус сторно/возвраты за 90 дней)
+   *  • /api/account/balance     → real + bonus (надёжный источник)
+   *  • /api/account/cpa-balance → CPA-баланс (если ручка отдаёт)
+   *
+   * advance в этом методе = текущий остаток CPA-аванса (если Avito его отдал).
+   * Если Avito не отдаёт CPA-баланс — оставляем 0, а на дашборде покажем
+   * не остаток, а ИЗМЕНЕНИЕ CPA-аванса за период (пополнения − расход).
    */
   async fetchBalance(): Promise<AvitoBalance | null> {
     if (this.settings.mode !== 'api') return null;
     if (!PROXY_BASE) return null;
     try {
-      const today = new Date();
-      const past = new Date(today);
-      past.setDate(today.getDate() - 90);
-      const fmt = (d: Date) => d.toISOString().slice(0, 10);
-      const dtFrom = `${fmt(past)}T00:00:00Z`;
-      const dtTo = `${fmt(today)}T23:59:59Z`;
-      const [bal, cpa, ops] = await Promise.allSettled([
+      const [bal, cpa] = await Promise.allSettled([
         proxyFetch<Record<string, unknown>>('/api/account/balance', this.headers()),
         proxyFetch<Record<string, unknown>>(
           '/api/account/cpa-balance',
-          this.headers()
-        ),
-        proxyFetch<{
-          result?: { operations?: Array<Record<string, unknown>> };
-        }>(
-          `/api/account/operations?dateFrom=${encodeURIComponent(
-            dtFrom
-          )}&dateTo=${encodeURIComponent(dtTo)}`,
           this.headers()
         ),
       ]);
@@ -716,25 +704,6 @@ export class AvitoAdapter implements IAvitoAdapter {
         advance = Number(
           root.advance ?? root.balance ?? root.amount ?? root.cpaBalance ?? 0
         );
-      }
-      // Если основная ручка не дала аванс — посчитаем по операциям:
-      // сумма всех «внесений CPA аванса» минус сторно за 90 дней.
-      // Это даёт примерный остаток (не учитывая фактические списания, которые
-      // в operations_history часто не приходят отдельной строкой).
-      if (advance === 0 && ops.status === 'fulfilled') {
-        const list = ops.value.result?.operations ?? [];
-        let sumIn = 0;
-        let sumRefund = 0;
-        for (const op of list) {
-          const opType = String(op.operationType ?? '').toLowerCase();
-          const amount = Number(op.amountTotal ?? op.amountRub ?? 0);
-          if (opType.includes('внесение cpa') || opType.includes('cpa аванс')) {
-            sumIn += amount;
-          } else if (opType.includes('сторно')) {
-            sumRefund += amount;
-          }
-        }
-        advance = Math.max(0, sumIn + sumRefund); // сторно = плюс к балансу
       }
       return {
         real,
