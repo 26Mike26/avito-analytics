@@ -47,16 +47,33 @@ export default function Dashboard() {
     () => itemsInDateRange(allItems, metrics, period.from, period.to),
     [allItems, metrics, period.from, period.to]
   );
-  // Общие расходы аккаунта (рассылки, прочие услуги без itemId) за период
-  const accountSpendInPeriod = useMemo(
-    () =>
-      accountCharges
-        .filter((c) => c.date >= period.from && c.date <= period.to)
-        .reduce((s, c) => s + c.amount, 0),
+  // Разбиваем расходы из operations_history на 3 группы за выбранный период:
+  //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
+  //  - account_other: рассылки и прочие услуги, не реклама
+  //  - refund: сторно (вычитается из обоих)
+  const chargesInPeriod = useMemo(
+    () => accountCharges.filter((c) => c.date >= period.from && c.date <= period.to),
     [accountCharges, period.from, period.to]
   );
+  const promotionPoolSpend = useMemo(
+    () =>
+      chargesInPeriod
+        .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
+        .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod]
+  );
+  const accountOtherSpend = useMemo(
+    () =>
+      chargesInPeriod
+        .filter((c) => c.kind === 'account_other')
+        .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod]
+  );
   const stats = calculateAccountStats(items, kpi);
-  const totalSpendWithAccount = stats.totalSpend + accountSpendInPeriod;
+  // «Расход на объявления» = per-item (из VAS) + promotion_pool (CPA-авансы).
+  // То есть всё что ушло на рекламу, по объявлениям и неаттрибутированное.
+  const adsSpend = stats.totalSpend + Math.max(0, promotionPoolSpend);
+  const totalSpendWithAccount = adsSpend + Math.max(0, accountOtherSpend);
 
   const sortedByEfficiency = [...items]
     .filter((i) => i.contacts > 0)
@@ -144,33 +161,56 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Когда есть общие расходы (рассылки и пр.) — показываем разбивку отдельным блоком */}
-      {accountSpendInPeriod > 0 && (
-        <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 flex flex-wrap items-center gap-3 text-sm">
-          <Coins className="w-4 h-4 text-amber-300" />
-          <span className="text-ink-300">За период {period.from} — {period.to}:</span>
-          <span className="text-white font-semibold">
-            расход на объявления {formatRub(stats.totalSpend)}
-          </span>
-          <span className="text-ink-500">+</span>
-          <span className="text-white font-semibold">
-            общие (рассылки/пр.) {formatRub(accountSpendInPeriod)}
-          </span>
-          <span className="text-ink-500">=</span>
-          <span className="text-amber-200 font-bold">
-            {formatRub(totalSpendWithAccount)}
-          </span>
+      {/* Разбивка расхода: на объявления (per-item + CPA-аванс) и общие (рассылки) */}
+      {(promotionPoolSpend > 0 || accountOtherSpend > 0) && (
+        <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <Coins className="w-4 h-4 text-amber-300" />
+            <span className="text-ink-300">
+              За период {period.from} — {period.to}:
+            </span>
+            <span className="text-white font-semibold">
+              расход на объявления {formatRub(adsSpend)}
+            </span>
+            {accountOtherSpend > 0 && (
+              <>
+                <span className="text-ink-500">+</span>
+                <span className="text-white font-semibold">
+                  рассылки и прочее {formatRub(accountOtherSpend)}
+                </span>
+              </>
+            )}
+            <span className="text-ink-500">=</span>
+            <span className="text-amber-200 font-bold">
+              {formatRub(totalSpendWithAccount)}
+            </span>
+          </div>
+          {promotionPoolSpend > 0 && stats.totalSpend < promotionPoolSpend / 2 && (
+            <div className="mt-2 text-xs text-ink-400 leading-relaxed">
+              💡 У тебя CPx-тариф (оплата за просмотры). Avito API не отдаёт детализацию
+              расхода по каждому объявлению через operations_history.
+              Чтобы увидеть точные суммы по каждому объявлению — экспортируйте отчёт из{' '}
+              <span className="text-white">
+                Авито Pro → Статистика → Детализация → Скачать отчёт
+              </span>{' '}
+              и загрузите CSV в{' '}
+              <Link to="/settings" className="text-accent hover:underline">
+                Настройки → Импорт
+              </Link>
+              .
+            </div>
+          )}
         </div>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
-          label="Расход"
-          value={formatRub(totalSpendWithAccount)}
+          label="Расход на объявления"
+          value={formatRub(adsSpend)}
           icon={Coins}
           hint={
-            accountSpendInPeriod > 0
-              ? `Объявления ${formatRub(stats.totalSpend)} + общие ${formatRub(accountSpendInPeriod)}`
+            promotionPoolSpend > 0
+              ? `Per-item ${formatRub(stats.totalSpend)} + CPx-аванс ${formatRub(promotionPoolSpend)}`
               : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
           }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}

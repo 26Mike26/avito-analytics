@@ -221,9 +221,22 @@ export default function Settings() {
                 Импорт статистики (CSV)
               </h2>
             </div>
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm text-ink-200 leading-relaxed mb-3">
+              <div className="font-semibold text-white mb-1">
+                Если у вас CPx-тариф (оплата за просмотры) —
+              </div>
+              расходы по каждому объявлению Avito API через operations_history
+              не отдаёт. Точная детализация доступна только в выгрузке отчёта.
+              <ol className="mt-2 ml-5 list-decimal space-y-0.5 text-ink-300">
+                <li>Авито Pro → раздел <b>Статистика</b></li>
+                <li>Вкладка <b>Детализация</b> → выберите период</li>
+                <li>Кнопка <b>«Скачать отчёт»</b> справа сверху</li>
+                <li>Загрузите полученный CSV ниже — суммы расхода по объявлениям применятся автоматически</li>
+              </ol>
+            </div>
             <p className="text-sm text-ink-300 mb-3">
-              Загрузите выгрузку из личного кабинета Авито (или скачайте шаблон ниже и заполните вручную).
-              Распознаются два формата: <b>сводный отчёт</b> по объявлениям и <b>отчёт по дням</b> (если есть колонка <code>date</code>).
+              Также распознаётся ручная выгрузка по объявлениям и шаблон «по дням»
+              (если есть колонка <code>date</code>).
             </p>
             <div className="flex flex-wrap items-center gap-2 mb-4">
               <button

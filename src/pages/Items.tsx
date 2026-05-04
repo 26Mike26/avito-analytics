@@ -59,13 +59,24 @@ export default function Items() {
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // Общие расходы (без привязки к объявлениям) за период — для подсказки
-  const accountSpendInPeriod = useMemo(
-    () =>
-      accountCharges
-        .filter((c) => c.date >= period.from && c.date <= period.to)
-        .reduce((s, c) => s + c.amount, 0),
+  // Расходы аккаунта за период — отделяем рассылки от CPA-пула
+  const chargesInPeriod = useMemo(
+    () => accountCharges.filter((c) => c.date >= period.from && c.date <= period.to),
     [accountCharges, period.from, period.to]
+  );
+  const promotionPoolSpend = useMemo(
+    () =>
+      chargesInPeriod
+        .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
+        .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod]
+  );
+  const accountOtherSpend = useMemo(
+    () =>
+      chargesInPeriod
+        .filter((c) => c.kind === 'account_other')
+        .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod]
   );
 
   // Пересчитываем items: суммы метрик за выбранный период.
@@ -132,12 +143,38 @@ export default function Items() {
   return (
     <Layout
       title="Объявления"
-      subtitle={
-        accountSpendInPeriod > 0
-          ? `Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}. Дополнительно общие расходы аккаунта (рассылки/прочее без объявления) за период: ${formatRub(accountSpendInPeriod)}.`
-          : `Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`
-      }
+      subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
     >
+      {/* Подсказка: если расход в operations_history агрегированный (CPx-тариф) —
+          точная per-item детализация только через CSV-импорт из Авито Pro. */}
+      {promotionPoolSpend > 0 && (
+        <div className="card border border-blue-500/30 bg-blue-500/5 p-3 mb-4 text-sm flex flex-wrap items-start gap-3">
+          <Filter className="w-4 h-4 text-blue-300 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-white font-semibold mb-1">
+              Расход за просмотры (CPx) — агрегированный
+            </div>
+            <div className="text-ink-300 leading-relaxed">
+              За период {period.from} — {period.to} списано{' '}
+              <span className="text-white">{formatRub(promotionPoolSpend)}</span> на
+              продвижение через CPx (оплата за просмотры). Avito API не отдаёт
+              расход по каждому объявлению через operations_history. Чтобы увидеть
+              точные суммы — экспортируйте отчёт из Авито Pro → Статистика →
+              Детализация → «Скачать отчёт» и загрузите CSV в{' '}
+              <Link to="/settings" className="text-accent hover:underline">
+                Настройки → Импорт
+              </Link>
+              . Парсер уже понимает колонку «Расходы на объявления».
+            </div>
+            {accountOtherSpend > 0 && (
+              <div className="mt-1 text-ink-400 text-xs">
+                Дополнительно общие расходы аккаунта (рассылки):{' '}
+                {formatRub(accountOtherSpend)}.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="card p-4 mb-4">
         <div className="flex items-center gap-2 mb-3">
           <Filter className="w-4 h-4 text-ink-400" />

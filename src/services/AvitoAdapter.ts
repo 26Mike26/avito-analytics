@@ -30,13 +30,20 @@ function normalizeCity(raw: unknown): string {
 }
 
 /**
- * Общий расход аккаунта по дням, не привязанный к конкретному объявлению:
- * рассылки, услуги по аккаунту, прочие списания где Авито не возвращает itemId.
+ * Расход аккаунта по дням, не привязанный к конкретному объявлению.
+ * kind:
+ *  - 'promotion_pool' — пополнение CPA/CPx-аванса, т.е. деньги, ушедшие
+ *    на рекламу, но без детализации по объявлению (Avito API не отдаёт
+ *    эту детализацию через operations_history — она доступна только в
+ *    CSV-выгрузке из Авито Pro Статистики).
+ *  - 'account_other' — рассылки, прочие услуги по аккаунту, не реклама.
+ *  - 'refund' — сторно/возврат, отрицательная сумма (компенсирует расход).
  */
 export type AccountCharge = {
   date: string;
   amount: number;
   description: string;
+  kind: 'promotion_pool' | 'account_other' | 'refund';
 };
 
 /** Баланс аккаунта в Авито. */
@@ -517,44 +524,53 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
-   * Классифицирует операцию из operations_history. Используется и в
-   * fetchAccountCharges (per-account), и в fetchMetrics (per-item).
+   * Классифицирует операцию из operations_history.
    *
-   * Возвращает:
-   *  - 'charge_per_item' — расход на конкретное объявление (есть itemId)
-   *  - 'charge_account'  — общий расход аккаунта (рассылки, CPA-аванс)
-   *  - 'refund'          — сторно/возврат (вычитается из расхода)
-   *  - 'topup'           — пополнение Авито Кошелька с карты (НЕ расход)
-   *  - 'unknown'         — игнорируем
+   *  - 'charge_per_item'    — расход на конкретное объявление (есть itemId)
+   *  - 'charge_promotion_pool' — внесение CPA/CPx-аванса = деньги на рекламу,
+   *    но без детализации по объявлениям (см. AccountCharge.kind = 'promotion_pool')
+   *  - 'charge_account_other' — рассылки и пр. услуги без рекламной природы
+   *  - 'refund'             — сторно/возврат
+   *  - 'topup'              — пополнение Авито Кошелька с карты (НЕ расход)
+   *  - 'unknown'            — игнорируем
    */
   private classifyOp(op: Record<string, unknown>):
     | 'charge_per_item'
-    | 'charge_account'
+    | 'charge_promotion_pool'
+    | 'charge_account_other'
     | 'refund'
     | 'topup'
     | 'unknown' {
     const opType = String(op.operationType ?? '').toLowerCase();
     const opName = String(op.operationName ?? '').toLowerCase();
+    const serviceName = String(op.serviceName ?? '').toLowerCase();
     const serviceType = String(op.serviceType ?? '').toLowerCase();
     // Сторно — возврат, вычитается из расхода
     if (opType.includes('сторно')) return 'refund';
     // Пополнение Авито Кошелька — не расход на рекламу
-    // (operationType: "аванс" + operationName: "Пополнение Авито Кошелька")
     if (opName.includes('пополнение авито кошелька')) return 'topup';
     if (opName.includes('пополнение кошелька')) return 'topup';
-    // Внесение CPA-аванса = деньги ушли на рекламу (с кошелька на CPA-баланс)
-    if (opType.includes('внесение cpa') || opType.includes('cpa аванс')) {
-      return 'charge_account';
-    }
-    // Резервирование под услугу
+    // Внесение CPA/CPx-аванса = пул на рекламу. Без itemId, но это
+    // ИМЕННО реклама, поэтому идёт в promotion_pool, а не в account_other.
     if (
-      opType.includes('резервирование') ||
-      ['vas', 'cpa', 'cpc', 'cpx'].includes(serviceType)
+      opType.includes('внесение cpa') ||
+      opType.includes('cpa аванс') ||
+      opType.includes('cpx') ||
+      opName.includes('cpa аванс')
     ) {
-      return op.itemId != null ? 'charge_per_item' : 'charge_account';
+      return 'charge_promotion_pool';
     }
-    // Если есть itemId — расход по объявлению
+    // Услуги VAS на конкретное объявление (XL, Premium, поднятие)
     if (op.itemId != null) return 'charge_per_item';
+    // Рассылки и прочие услуги по аккаунту без itemId
+    if (
+      serviceName.includes('рассылка') ||
+      serviceName.includes('mailing') ||
+      ['vas', 'mailing'].includes(serviceType)
+    ) {
+      return 'charge_account_other';
+    }
+    if (opType.includes('резервирование')) return 'charge_account_other';
     return 'unknown';
   }
 
@@ -587,23 +603,28 @@ export class AvitoAdapter implements IAvitoAdapter {
       for (const op of ops) {
         const cls = this.classifyOp(op);
         if (cls === 'unknown' || cls === 'topup') continue;
-        // per-item расходы не относятся к общим расходам — пропускаем
         if (cls === 'charge_per_item') continue;
         const amount = Number(op.amountTotal ?? op.amountRub ?? op.amount ?? 0);
         const ts = String(op.updatedAt ?? op.operationDate ?? '');
         if (!ts || amount === 0) continue;
         const opName = String(op.operationName ?? '');
         const serviceName = String(op.serviceName ?? '');
+        let kind: AccountCharge['kind'];
+        if (cls === 'charge_promotion_pool') kind = 'promotion_pool';
+        else if (cls === 'refund') kind = 'refund';
+        else kind = 'account_other';
         const description =
           cls === 'refund'
             ? `Сторно: ${serviceName || opName || 'услуга'}`
+            : cls === 'charge_promotion_pool'
+            ? opName || 'Внесение CPA-аванса'
             : opName ||
               (serviceName ? `Услуга: ${serviceName}` : 'Расход аккаунта');
         out.push({
           date: ts.slice(0, 10),
-          // Сторно — отрицательная сумма, расход — положительная
           amount: cls === 'refund' ? -Math.abs(amount) : Math.abs(amount),
           description,
+          kind,
         });
       }
       return out;
