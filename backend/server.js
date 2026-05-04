@@ -275,42 +275,68 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
   );
 }));
 
-// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent/cost).
-// Не у всех аккаунтов и тарифов работает. Если Avito возвращает 400/404/429 —
-// проксируем как HTTP 200 с {error, status}, чтобы Network-вкладка не светилась
-// красным и фронт спокойно откатывался на v1.
+// In-memory кэш для /stats/v2 — 60 секунд per (accountId, dateFrom, dateTo, itemIds).
+// Avito жёстко ограничивает rate (429), кэш экономит запросы.
+const v2Cache = new Map(); // key → { ts, data }
+const V2_TTL_MS = 60_000;
+function v2CacheKey(accountId, body) {
+  return [
+    accountId,
+    body.dateFrom,
+    body.dateTo,
+    (body.itemIds ?? []).join(','),
+    (body.fields ?? []).join(','),
+    body.periodGrouping ?? '',
+  ].join('|');
+}
+
+// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent).
+// Не у всех тарифов работает. Если Avito возвращает 400/404/429/500 —
+// проксируем как HTTP 200 с {_v2_unavailable: true}, чтобы Network не светилась.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
+  const { dateFrom, dateTo, itemIds, fields } = req.body;
+  // ВАЖНО: Avito v2 enum поля = uniqViews, contacts, favorites, spent.
+  // Поля «cost» НЕТ. Используем только spent.
+  const realFields = fields ?? ['uniqViews', 'contacts', 'favorites', 'spent'];
+  const body = {
+    dateFrom,
+    dateTo,
+    itemIds: itemIds ?? [],
+    fields: realFields,
+    periodGrouping: 'day',
+  };
+  // Проверяем кэш
+  const key = v2CacheKey(accountId, body);
+  const cached = v2Cache.get(key);
+  if (cached && Date.now() - cached.ts < V2_TTL_MS) {
+    res.json(cached.data);
+    return;
+  }
   try {
-    const { dateFrom, dateTo, itemIds, fields } = req.body;
     const result = await avitoFetch(
       accountId,
       `/stats/v2/accounts/${accountId}/items`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          dateFrom,
-          dateTo,
-          itemIds: itemIds ?? [],
-          fields:
-            fields ?? [
-              'uniqViews',
-              'contacts',
-              'favorites',
-              'spent',
-              'cost',
-            ],
-          periodGrouping: 'day',
-        }),
-      }
+      { method: 'POST', body: JSON.stringify(body) }
     );
+    v2Cache.set(key, { ts: Date.now(), data: result });
+    // Не даём кэшу неограниченно расти — простая очистка
+    if (v2Cache.size > 200) {
+      const oldest = [...v2Cache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+      if (oldest) v2Cache.delete(oldest[0]);
+    }
     res.json(result);
   } catch (e) {
-    // Любая ошибка от Avito → 200 OK + null/error, фронт перейдёт на v1 без красного в Network.
-    res.json({
+    // 429 особенно частый — кэшируем «недоступность» на 30 секунд,
+    // чтобы фронт за это время не дёргал лишний раз
+    const stub = {
       _v2_unavailable: true,
       error: e.message,
       status: e.status ?? 500,
-    });
+    };
+    if (e.status === 429) {
+      v2Cache.set(key, { ts: Date.now() - (V2_TTL_MS - 30_000), data: stub });
+    }
+    res.json(stub);
   }
 }));
 

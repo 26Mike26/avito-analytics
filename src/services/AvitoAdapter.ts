@@ -194,13 +194,8 @@ export class AvitoAdapter implements IAvitoAdapter {
             dateFrom,
             dateTo,
             itemIds: slice,
-            fields: [
-              'uniqViews',
-              'contacts',
-              'favorites',
-              'spent',
-              'cost',
-            ],
+            // Avito v2 enum: uniqViews, contacts, favorites, spent. Поля cost нет.
+            fields: ['uniqViews', 'contacts', 'favorites', 'spent'],
             periodGrouping: 'day',
           }),
           headers: { 'Content-Type': 'application/json' },
@@ -222,13 +217,12 @@ export class AvitoAdapter implements IAvitoAdapter {
             contacts?: number;
             favorites?: number;
             spent?: number;
-            cost?: number;
           }>;
         }>;
         for (const row of list) {
           const id = String(row.itemId);
           for (const s of row.stats ?? []) {
-            const spend = Number(s.spent ?? s.cost ?? 0);
+            const spend = Number(s.spent ?? 0);
             out.push({
               itemId: id,
               date: s.date,
