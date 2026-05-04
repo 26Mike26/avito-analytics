@@ -110,21 +110,25 @@ export default function Dashboard() {
             label="Реальный баланс"
             icon={<Wallet className="w-4 h-4" />}
             value={formatRub(balance.real)}
-            hint="Доступные деньги на счёте"
+            hint="Доступные деньги на счёте Авито"
             tone="white"
           />
           <BalanceCard
             label="Бонусные средства"
             icon={<Gift className="w-4 h-4" />}
             value={formatRub(balance.bonus)}
-            hint="Промо-баллы / бонусы"
+            hint="Промо-баллы / бонусы Авито"
             tone="violet"
           />
           <BalanceCard
             label="CPA-аванс"
             icon={<PiggyBank className="w-4 h-4" />}
-            value={formatRub(balance.advance)}
-            hint="Зарезервировано под целевые действия"
+            value={balance.advance > 0 ? formatRub(balance.advance) : '—'}
+            hint={
+              balance.advance > 0
+                ? 'Зарезервировано под целевые действия'
+                : 'CPA-программа к аккаунту не подключена'
+            }
             tone="orange"
           />
           {balanceTotal != null && (
@@ -137,6 +141,25 @@ export default function Dashboard() {
               обновлено {new Date(balance.fetchedAt).toLocaleString('ru-RU')}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Когда есть общие расходы (рассылки и пр.) — показываем разбивку отдельным блоком */}
+      {accountSpendInPeriod > 0 && (
+        <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 flex flex-wrap items-center gap-3 text-sm">
+          <Coins className="w-4 h-4 text-amber-300" />
+          <span className="text-ink-300">За период {period.from} — {period.to}:</span>
+          <span className="text-white font-semibold">
+            расход на объявления {formatRub(stats.totalSpend)}
+          </span>
+          <span className="text-ink-500">+</span>
+          <span className="text-white font-semibold">
+            общие (рассылки/пр.) {formatRub(accountSpendInPeriod)}
+          </span>
+          <span className="text-ink-500">=</span>
+          <span className="text-amber-200 font-bold">
+            {formatRub(totalSpendWithAccount)}
+          </span>
         </div>
       )}
 

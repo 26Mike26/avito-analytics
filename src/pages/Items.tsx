@@ -46,6 +46,7 @@ const efficiencyLabels: Record<EfficiencyFilter, string> = {
 export default function Items() {
   const items = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
+  const accountCharges = useStore((s) => s.accountCharges);
   const kpi = useStore((s) => s.kpi);
   const setItemBid = useStore((s) => s.setItemBid);
 
@@ -57,6 +58,15 @@ export default function Items() {
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Общие расходы (без привязки к объявлениям) за период — для подсказки
+  const accountSpendInPeriod = useMemo(
+    () =>
+      accountCharges
+        .filter((c) => c.date >= period.from && c.date <= period.to)
+        .reduce((s, c) => s + c.amount, 0),
+    [accountCharges, period.from, period.to]
+  );
 
   // Пересчитываем items: суммы метрик за выбранный период.
   // Это и есть «настоящий» фильтр по дням, который раньше не работал.
@@ -122,7 +132,11 @@ export default function Items() {
   return (
     <Layout
       title="Объявления"
-      subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
+      subtitle={
+        accountSpendInPeriod > 0
+          ? `Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}. Дополнительно общие расходы аккаунта (рассылки/прочее без объявления) за период: ${formatRub(accountSpendInPeriod)}.`
+          : `Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`
+      }
     >
       <div className="card p-4 mb-4">
         <div className="flex items-center gap-2 mb-3">

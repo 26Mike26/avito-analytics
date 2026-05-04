@@ -1,9 +1,9 @@
 import { CalendarRange } from 'lucide-react';
-import { lastNDaysRange } from '../lib/analytics';
+import { formatLocalDate, lastNDaysRange } from '../lib/analytics';
 
 export type PeriodValue = { from: string; to: string };
 
-const fmt = (d: Date) => d.toISOString().slice(0, 10);
+const fmt = (d: Date) => formatLocalDate(d);
 
 /**
  * Готовые пресеты периода. Каждый возвращает {from, to} (включительно).

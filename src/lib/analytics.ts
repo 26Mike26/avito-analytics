@@ -202,19 +202,32 @@ export function regionAverages(items: AvitoItem[]) {
  * Если указан только dateFrom — берём с этой даты до сегодня.
  * Если ни тот, ни другой — возвращаем items как есть.
  */
+/**
+ * Нормализует адрес объявления: «Санкт-Петербург, ул. Ленина, 5» → «Санкт-Петербург».
+ * Применяется на лету, чтобы старые items из localStorage тоже отображались
+ * как чистые города (без улиц).
+ */
+function cleanCity(raw: string): string {
+  const s = (raw ?? '').trim();
+  if (!s) return '—';
+  const first = s.split(',')[0].trim();
+  return first.replace(/^г\.?\s*/i, '').trim() || '—';
+}
+
 export function itemsInDateRange(
   items: AvitoItem[],
   metrics: ItemMetrics[],
   dateFrom?: string,
   dateTo?: string
 ): AvitoItem[] {
-  if (!dateFrom && !dateTo) return items;
+  // Сначала нормализуем регион (на случай старых данных в localStorage).
+  const normalizedItems = items.map((it) => ({ ...it, region: cleanCity(it.region) }));
+  if (!dateFrom && !dateTo) return normalizedItems;
   const from = dateFrom ?? '0000-01-01';
   const to = dateTo ?? '9999-12-31';
   const filtered = metrics.filter((m) => m.date >= from && m.date <= to);
   if (filtered.length === 0) {
-    // Нет метрик за период — занулим показатели у items, чтобы не вводить в заблуждение
-    return items.map((it) => ({
+    return normalizedItems.map((it) => ({
       ...it,
       views: 0,
       contacts: 0,
@@ -231,7 +244,7 @@ export function itemsInDateRange(
     cur.spend += m.spend;
     sumByItem.set(m.itemId, cur);
   }
-  return items.map((it) => {
+  return normalizedItems.map((it) => {
     const sum = sumByItem.get(it.id);
     if (!sum) {
       return { ...it, views: 0, contacts: 0, favorites: 0, spend: 0 };
@@ -240,13 +253,24 @@ export function itemsInDateRange(
   });
 }
 
+/**
+ * Форматирует Date в YYYY-MM-DD по ЛОКАЛЬНОЙ таймзоне.
+ * Это важно: toISOString() даёт UTC, и в МСК (+3) ночью «сегодня»
+ * превращается в «вчера», ломая пресеты «Сегодня»/«Вчера».
+ */
+export function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /** Возвращает диапазон дат «последние N дней включительно» в формате YYYY-MM-DD. */
 export function lastNDaysRange(days: number, today = new Date()): { from: string; to: string } {
   const t = new Date(today);
   const from = new Date(t);
   from.setDate(t.getDate() - (days - 1));
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: fmt(from), to: fmt(t) };
+  return { from: formatLocalDate(from), to: formatLocalDate(t) };
 }
 
 export function aggregateMetricsByDate(metrics: ItemMetrics[]) {
