@@ -275,48 +275,45 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
   );
 }));
 
-app.post('/api/stats/items-analytics', withAcc(async (accountId, req, res) => {
-  const {
-    dateFrom,
-    dateTo,
-    metrics,
-    grouping = 'item',
-    limit = 1000,
-    offset = 0,
-    filter,
-    sort,
-  } = req.body ?? {};
-
-  res.json(
-    await avitoFetch(
-      accountId,
-      `/stats/v2/accounts/${accountId}/items`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          dateFrom,
-          dateTo,
-          metrics:
-            metrics ?? [
-              'views',
-              'contacts',
-              'favorites',
-              'spending',
-              'allSpending',
-              'presenceSpending',
-              'promoSpending',
-              'commission',
-              'restSpending',
-            ],
-          grouping,
-          limit,
-          offset,
-          ...(filter ? { filter } : {}),
-          ...(sort ? { sort } : {}),
-        }),
-      }
-    )
-  );
+// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent/cost).
+// Не у всех аккаунтов и тарифов работает. На 429/404/недоступности фронт
+// откатится на v1 + operations_history.
+app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
+  try {
+    const { dateFrom, dateTo, itemIds, fields } = req.body;
+    res.json(
+      await avitoFetch(
+        accountId,
+        `/stats/v2/accounts/${accountId}/items`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            dateFrom,
+            dateTo,
+            itemIds: itemIds ?? [],
+            fields:
+              fields ?? [
+                'views',
+                'uniqViews',
+                'contacts',
+                'uniqContacts',
+                'favorites',
+                'spent',
+                'cost',
+              ],
+            periodGrouping: 'day',
+          }),
+        }
+      )
+    );
+  } catch (e) {
+    // Возвращаем структурированную ошибку без 500 — фронту понятно, что v2 не сработал.
+    res.status(e.status ?? 500).json({
+      error: e.message,
+      status: e.status ?? 500,
+      body: e.body,
+    });
+  }
 }));
 
 app.get('/api/stats/calls', withAcc(async (accountId, req, res) => {
@@ -416,7 +413,7 @@ app.listen(PORT, () => {
   console.log('  GET  /api/items?status=active&per_page=25');
   console.log('  GET  /api/items/:id');
   console.log('  POST /api/stats/items   { dateFrom, dateTo, itemIds, fields }');
-  console.log('  POST /api/stats/items-analytics   { dateFrom, dateTo, metrics, grouping }');
+  console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, fields } — опц., per-item spend');
   console.log('  GET  /api/stats/calls?dateFrom=...&dateTo=...');
   console.log('  GET  /api/promotion/services?itemIds=...');
   console.log('  GET  /api/cpx/bids');

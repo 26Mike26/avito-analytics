@@ -18,11 +18,9 @@ npm start
 ## Эндпоинты
 
 - `GET /api/health` — проверяет, что токен можно получить.
-- `GET /api/items?status=active&per_page=100&page=1` — список объявлений аккаунта.
-- `POST /api/stats/items` — дневные счётчики по объявлениям через `stats/v1`.
-- `POST /api/stats/items-analytics` — показатели профиля через `stats/v2`, включая `spending` по объявлениям.
-- `GET /api/account/operations` — история операций кошелька для баланса и расходов без объявления.
-- `POST /api/cpx/bids/manual` — изменение ставки CPx `{ itemId, bid }`.
+- `GET /api/items` — список объявлений аккаунта.
+- `GET /api/metrics?dateFrom=2026-04-01&dateTo=2026-04-30&itemIds=1,2,3` — статистика по дням.
+- `POST /api/bid` — изменение ставки `{ itemId, bid }`.
 
 ## Как получить креденшелы
 
@@ -33,11 +31,21 @@ npm start
 
 ## Подключение фронтенда
 
-Фронтенд уже ходит в этот прокси через `VITE_AVITO_PROXY_URL`.
-Для расходов по конкретным объявлениям используется `stats/v2/accounts/{user_id}/items`
-с метриками `spending`, `presenceSpending`, `promoSpending`, `commission`,
-`restSpending`. История операций кошелька не используется как основной источник
-per-item расхода, потому что она часто отдаёт только общий CPA/CPx-аванс.
+В `src/services/AvitoAdapter.ts` замените методы `fetchItems` / `fetchMetrics` / `updateBid`,
+чтобы они ходили на `http://localhost:4000/api/...` вместо генерации mock-данных.
+Пример:
+
+```ts
+async fetchItems(): Promise<AvitoItem[]> {
+  if (this.settings.mode === 'api') {
+    const res = await fetch('http://localhost:4000/api/items');
+    if (!res.ok) throw new Error('API недоступен');
+    const data = await res.json();
+    return data.resources.map(mapAvitoItem); // адаптируйте маппинг
+  }
+  return generateMockItems();
+}
+```
 
 ## ⚠ Важно
 

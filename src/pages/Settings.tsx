@@ -223,10 +223,10 @@ export default function Settings() {
             </div>
             <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm text-ink-200 leading-relaxed mb-3">
               <div className="font-semibold text-white mb-1">
-                Если нужно сверить расходы по объявлениям —
+                Если у вас CPx-тариф (оплата за просмотры) —
               </div>
-              сервис подтягивает per-item расход через Avito API stats/v2. CSV
-              остаётся полезен для ручной сверки или когда API временно недоступен.
+              расходы по каждому объявлению Avito API через operations_history
+              не отдаёт. Точная детализация доступна только в выгрузке отчёта.
               <ol className="mt-2 ml-5 list-decimal space-y-0.5 text-ink-300">
                 <li>Авито Pro → раздел <b>Статистика</b></li>
                 <li>Вкладка <b>Детализация</b> → выберите период</li>

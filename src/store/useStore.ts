@@ -139,6 +139,11 @@ type Store = {
   balance: AvitoBalance | null;
   /** Общие расходы аккаунта (без привязки к объявлению): рассылки и т.п. */
   accountCharges: AccountCharge[];
+  /**
+   * true, если последний fetchMetrics получил per-item spend через /stats/v2.
+   * Тогда CPx-аванс уже учтён в metrics — не распределяем повторно по показам.
+   */
+  hasPerItemSpend: boolean;
 
   // ───── Управление сессией
   bootstrap: () => Promise<void>;
@@ -283,6 +288,7 @@ export const useStore = create<Store>((set, get) => {
     adapter,
     balance: null,
     accountCharges: [],
+    hasPerItemSpend: false,
 
     bootstrap: async () => {
       // ─── Supabase режим ───
@@ -865,6 +871,9 @@ export const useStore = create<Store>((set, get) => {
         console.warn('[adapter] fetchBids failed:', e);
       }
       const metrics = await adapter.fetchMetrics(items);
+      // Запоминаем — пришёл ли per-item spend из v2. Это переключает UI:
+      // если да, не распределяем CPx-аванс повторно по показам.
+      set({ hasPerItemSpend: !!adapter.lastMetricsHadV2Spend });
       // Подтягиваем «события из Авито» (история операций, входящие сообщения и т.п.)
       try {
         const events = await adapter.fetchAvitoEvents();

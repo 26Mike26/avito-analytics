@@ -39,19 +39,25 @@ export default function Dashboard() {
   const recommendations = useStore((s) => s.recommendations);
   const balance = useStore((s) => s.balance);
   const accountCharges = useStore((s) => s.accountCharges);
+  const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
   // Items с реальными суммами за выбранный период.
+  // accountCharges передаём, чтобы CPx-аванс распределился по объявлениям
+  // пропорционально просмотрам (для CPx-тарифа когда v2 spend недоступен).
+  // Если v2 уже дал per-item spend — hasPerItemSpend=true, не распределяем повторно.
   const items = useMemo(
     () =>
       itemsInDateRange(
         allItems,
         metrics,
         period.from,
-        period.to
+        period.to,
+        accountCharges,
+        hasPerItemSpend
       ),
-    [allItems, metrics, period.from, period.to]
+    [allItems, metrics, period.from, period.to, accountCharges, hasPerItemSpend]
   );
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
@@ -63,10 +69,14 @@ export default function Dashboard() {
   );
   const promotionPoolSpend = useMemo(
     () =>
-      chargesInPeriod
-        .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
-        .reduce((s, c) => s + c.amount, 0),
-    [chargesInPeriod]
+      // Если v2 уже дал точные per-item spend — CPx-пул учтён в items.spend,
+      // в плашке его повторно не показываем.
+      hasPerItemSpend
+        ? 0
+        : chargesInPeriod
+            .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
+            .reduce((s, c) => s + c.amount, 0),
+    [chargesInPeriod, hasPerItemSpend]
   );
   const accountOtherSpend = useMemo(
     () =>
@@ -76,7 +86,8 @@ export default function Dashboard() {
     [chargesInPeriod]
   );
   const stats = calculateAccountStats(items, kpi);
-  // stats.totalSpend — расход на объявления из stats/v2 Avito.
+  // stats.totalSpend уже включает CPx-распределение (см. itemsInDateRange),
+  // поэтому второй раз prom-pool не плюсуем — это и есть «Расход на объявления».
   const adsSpend = stats.totalSpend;
   const totalSpendWithAccount = adsSpend + Math.max(0, accountOtherSpend);
 
@@ -202,7 +213,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Разбивка расхода: объявления из stats/v2 и расходы без объявления из history */}
+      {/* Разбивка расхода: на объявления (per-item + распределённый CPx-пул) и рассылки */}
       {(promotionPoolSpend > 0 || accountOtherSpend > 0) && (
         <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
@@ -228,9 +239,10 @@ export default function Dashboard() {
           </div>
           {promotionPoolSpend > 0 && (
             <div className="mt-2 text-xs text-ink-400 leading-relaxed">
-              В истории операций есть пополнения CPA/CPx-аванса на {formatRub(promotionPoolSpend)}.
-              В расход объявлений они не добавляются повторно: per-item суммы уже приходят
-              из Avito API stats/v2. Для сверки можно импортировать CSV из{' '}
+              CPx-тариф (оплата за просмотры): {formatRub(promotionPoolSpend)} распределены
+              по объявлениям пропорционально количеству просмотров за период.
+              Точный per-item расход в Avito API отсутствует — можно сверить или импортировать
+              CSV из{' '}
               <span className="text-white">
                 Авито Pro → Статистика → Детализация
               </span>
@@ -245,7 +257,11 @@ export default function Dashboard() {
           label="Расход на объявления"
           value={formatRub(adsSpend)}
           icon={Coins}
-          hint={`${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`}
+          hint={
+            promotionPoolSpend > 0
+              ? `Per-item ${formatRub(stats.totalSpend)} + CPx-аванс ${formatRub(promotionPoolSpend)}`
+              : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
+          }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />
         <KpiCard
