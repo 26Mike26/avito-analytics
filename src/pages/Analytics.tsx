@@ -32,7 +32,6 @@ import { ProgressBar } from '../components/ProgressBar';
 export default function Analytics() {
   const allItems = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
-  const accountCharges = useStore((s) => s.accountCharges);
   const kpi = useStore((s) => s.kpi);
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
@@ -40,10 +39,10 @@ export default function Analytics() {
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
 
-  // Items с пересчётом расхода за период (CPx-аванс распределён по показам).
+  // Items с пересчётом расхода за период.
   const itemsForPeriod = useMemo(
-    () => itemsInDateRange(allItems, metrics, period.from, period.to, accountCharges),
-    [allItems, metrics, period.from, period.to, accountCharges]
+    () => itemsInDateRange(allItems, metrics, period.from, period.to),
+    [allItems, metrics, period.from, period.to]
   );
 
   const categoriesList = useMemo(
@@ -63,8 +62,6 @@ export default function Analytics() {
   });
 
   // Метрики за выбранный период по выбранным items.
-  // Расход в metrics — только per-item VAS из operations (без распределённого CPx),
-  // поэтому к series.spend добавляем долю CPx-пула этого дня пропорционально views.
   const filteredMetrics = useMemo(
     () =>
       metrics.filter(
@@ -75,27 +72,10 @@ export default function Analytics() {
       ),
     [metrics, filteredItems, period.from, period.to]
   );
-  const cpxByDate = useMemo(() => {
-    // Сумма CPx-пополнений по дням за период
-    const m = new Map<string, number>();
-    for (const c of accountCharges) {
-      if (c.date < period.from || c.date > period.to) continue;
-      if (c.kind !== 'promotion_pool' && c.kind !== 'refund') continue;
-      m.set(c.date, (m.get(c.date) ?? 0) + c.amount);
-    }
-    return m;
-  }, [accountCharges, period.from, period.to]);
-  const series = useMemo(() => {
-    const baseSeries = aggregateMetricsByDate(filteredMetrics);
-    // Добавляем к расходу за день распределённый CPx-пул того же дня
-    return baseSeries.map((d) => {
-      const cpxThisDay = cpxByDate.get(d.date) ?? 0;
-      return {
-        ...d,
-        spend: Math.round(d.spend + cpxThisDay),
-      };
-    });
-  }, [filteredMetrics, cpxByDate]);
+  const series = useMemo(
+    () => aggregateMetricsByDate(filteredMetrics),
+    [filteredMetrics]
+  );
 
   const stats = calculateAccountStats(filteredItems, kpi);
 

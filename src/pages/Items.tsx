@@ -80,17 +80,15 @@ export default function Items() {
   );
 
   // Пересчитываем items: суммы метрик за выбранный период.
-  // CPx-аванс распределяется пропорционально просмотрам по объявлениям.
   const itemsForPeriod = useMemo(
     () =>
       itemsInDateRange(
         items,
         metrics,
         period.from,
-        period.to,
-        accountCharges
+        period.to
       ),
-    [items, metrics, period.from, period.to, accountCharges]
+    [items, metrics, period.from, period.to]
   );
 
   const categories = useMemo(
@@ -152,24 +150,25 @@ export default function Items() {
       title="Объявления"
       subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
     >
-      {/* Подсказка: на CPx-тарифе расход распределён по просмотрам. */}
-      {promotionPoolSpend > 0 && (
+      {(promotionPoolSpend > 0 || accountOtherSpend > 0) && (
         <div className="card border border-blue-500/30 bg-blue-500/5 p-3 mb-4 text-sm flex flex-wrap items-start gap-3">
           <Filter className="w-4 h-4 text-blue-300 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-white font-semibold mb-1">
-              Расход за просмотры распределён пропорционально показам
+              Расход по объявлениям берём из Avito API
             </div>
             <div className="text-ink-300 leading-relaxed">
-              За период списано{' '}
-              <span className="text-white">{formatRub(promotionPoolSpend)}</span> на
-              продвижение (CPx-тариф, оплата за просмотры). Avito API
-              эту сумму не делит по объявлениям — мы делим её
-              пропорционально количеству просмотров каждого объявления за тот же период.
-              Это близко к реальному распределению, но может отличаться от детализации
-              в Авито Pro. Для точных цифр —{' '}
+              Колонка «Расход» заполняется по каждому объявлению через stats/v2.
+              {promotionPoolSpend > 0 && (
+                <>
+                  {' '}Пополнения CPA/CPx-аванса на{' '}
+                  <span className="text-white">{formatRub(promotionPoolSpend)}</span>{' '}
+                  не прибавляются второй раз, чтобы не завысить CPL.
+                </>
+              )}{' '}
+              Для сверки можно{' '}
               <Link to="/settings" className="text-accent hover:underline">
-                импортируйте CSV
+                импортировать CSV
               </Link>{' '}
               из Авито Pro → Статистика → Детализация.
             </div>

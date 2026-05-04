@@ -275,6 +275,50 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
   );
 }));
 
+app.post('/api/stats/items-analytics', withAcc(async (accountId, req, res) => {
+  const {
+    dateFrom,
+    dateTo,
+    metrics,
+    grouping = 'item',
+    limit = 1000,
+    offset = 0,
+    filter,
+    sort,
+  } = req.body ?? {};
+
+  res.json(
+    await avitoFetch(
+      accountId,
+      `/stats/v2/accounts/${accountId}/items`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          dateFrom,
+          dateTo,
+          metrics:
+            metrics ?? [
+              'views',
+              'contacts',
+              'favorites',
+              'spending',
+              'allSpending',
+              'presenceSpending',
+              'promoSpending',
+              'commission',
+              'restSpending',
+            ],
+          grouping,
+          limit,
+          offset,
+          ...(filter ? { filter } : {}),
+          ...(sort ? { sort } : {}),
+        }),
+      }
+    )
+  );
+}));
+
 app.get('/api/stats/calls', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo } = req.query;
   const qs = new URLSearchParams();
@@ -372,6 +416,7 @@ app.listen(PORT, () => {
   console.log('  GET  /api/items?status=active&per_page=25');
   console.log('  GET  /api/items/:id');
   console.log('  POST /api/stats/items   { dateFrom, dateTo, itemIds, fields }');
+  console.log('  POST /api/stats/items-analytics   { dateFrom, dateTo, metrics, grouping }');
   console.log('  GET  /api/stats/calls?dateFrom=...&dateTo=...');
   console.log('  GET  /api/promotion/services?itemIds=...');
   console.log('  GET  /api/cpx/bids');

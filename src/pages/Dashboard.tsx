@@ -43,18 +43,15 @@ export default function Dashboard() {
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
   // Items с реальными суммами за выбранный период.
-  // accountCharges передаём, чтобы CPx-аванс распределился по объявлениям
-  // пропорционально просмотрам (per-item приближение для CPx-тарифа).
   const items = useMemo(
     () =>
       itemsInDateRange(
         allItems,
         metrics,
         period.from,
-        period.to,
-        accountCharges
+        period.to
       ),
-    [allItems, metrics, period.from, period.to, accountCharges]
+    [allItems, metrics, period.from, period.to]
   );
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
@@ -79,8 +76,7 @@ export default function Dashboard() {
     [chargesInPeriod]
   );
   const stats = calculateAccountStats(items, kpi);
-  // stats.totalSpend уже включает CPx-распределение (см. itemsInDateRange),
-  // поэтому второй раз prom-pool не плюсуем — это и есть «Расход на объявления».
+  // stats.totalSpend — расход на объявления из stats/v2 Avito.
   const adsSpend = stats.totalSpend;
   const totalSpendWithAccount = adsSpend + Math.max(0, accountOtherSpend);
 
@@ -206,7 +202,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Разбивка расхода: на объявления (per-item + распределённый CPx-пул) и рассылки */}
+      {/* Разбивка расхода: объявления из stats/v2 и расходы без объявления из history */}
       {(promotionPoolSpend > 0 || accountOtherSpend > 0) && (
         <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
@@ -232,10 +228,9 @@ export default function Dashboard() {
           </div>
           {promotionPoolSpend > 0 && (
             <div className="mt-2 text-xs text-ink-400 leading-relaxed">
-              CPx-тариф (оплата за просмотры): {formatRub(promotionPoolSpend)} распределены
-              по объявлениям пропорционально количеству просмотров за период.
-              Точный per-item расход в Avito API отсутствует — можно сверить или импортировать
-              CSV из{' '}
+              В истории операций есть пополнения CPA/CPx-аванса на {formatRub(promotionPoolSpend)}.
+              В расход объявлений они не добавляются повторно: per-item суммы уже приходят
+              из Avito API stats/v2. Для сверки можно импортировать CSV из{' '}
               <span className="text-white">
                 Авито Pro → Статистика → Детализация
               </span>
@@ -250,11 +245,7 @@ export default function Dashboard() {
           label="Расход на объявления"
           value={formatRub(adsSpend)}
           icon={Coins}
-          hint={
-            promotionPoolSpend > 0
-              ? `Per-item ${formatRub(stats.totalSpend)} + CPx-аванс ${formatRub(promotionPoolSpend)}`
-              : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
-          }
+          hint={`${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`}
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />
         <KpiCard
