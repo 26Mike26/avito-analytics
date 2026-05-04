@@ -121,13 +121,13 @@ export default function Dashboard() {
             tone="violet"
           />
           <BalanceCard
-            label="CPA-аванс"
+            label="Аванс на услуги"
             icon={<PiggyBank className="w-4 h-4" />}
             value={balance.advance > 0 ? formatRub(balance.advance) : '—'}
             hint={
               balance.advance > 0
-                ? 'Зарезервировано под целевые действия'
-                : 'CPA-программа к аккаунту не подключена'
+                ? 'Доступно на оплату продвижения и CPA'
+                : 'Аванс не сформирован'
             }
             tone="orange"
           />

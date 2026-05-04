@@ -164,11 +164,10 @@ export class AvitoAdapter implements IAvitoAdapter {
   async fetchItems(): Promise<AvitoItem[]> {
     if (this.settings.mode === 'api') {
       try {
-        const data = await proxyFetch<{ resources?: unknown[] }>(
-          '/api/items?status=active&per_page=100',
-          this.headers()
-        );
-        const list = (data.resources ?? []) as Array<{
+        // Тянем все статусы параллельно: активные + старые + удалённые + заблокированные.
+        // Avito API не поддерживает status через запятую — делаем несколько запросов.
+        const statuses = ['active', 'old', 'removed', 'blocked'];
+        const all: Array<{
           id: number | string;
           title?: string;
           status?: string;
@@ -176,19 +175,49 @@ export class AvitoAdapter implements IAvitoAdapter {
           address?: string;
           price?: number;
           url?: string;
-        }>;
-        return list.map((it) => ({
+        }> = [];
+        await Promise.all(
+          statuses.map(async (st) => {
+            try {
+              // Несколько страниц на статус (макс ~500 объявлений на статус — должно хватить)
+              for (let page = 1; page <= 5; page++) {
+                const data = await proxyFetch<{
+                  resources?: unknown[];
+                  meta?: { total?: number };
+                }>(
+                  `/api/items?status=${st}&per_page=100&page=${page}`,
+                  this.headers()
+                );
+                const list = (data.resources ?? []) as typeof all;
+                if (list.length === 0) break;
+                all.push(...list);
+                if (list.length < 100) break; // последняя страница
+              }
+            } catch (e) {
+              console.warn(`[AvitoAdapter] fetchItems status=${st} failed:`, e);
+            }
+          })
+        );
+        // Дедупликация по id (на всякий случай)
+        const seen = new Set<string>();
+        const unique = all.filter((it) => {
+          const id = String(it.id);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+        return unique.map((it) => ({
           id: String(it.id),
           title: it.title ?? `Объявление ${it.id}`,
           status:
-            it.status === 'removed' || it.status === 'closed'
+            it.status === 'removed' ||
+            it.status === 'closed' ||
+            it.status === 'old'
               ? 'archived'
-              : it.status === 'blocked'
+              : it.status === 'blocked' || it.status === 'rejected'
               ? 'paused'
               : 'active',
           category: it.category?.name ?? 'Без категории',
-          // Авито возвращает полный адрес «Санкт-Петербург, ул. Лебедева, 20АБ».
-          // Для группировки оставляем только город (до первой запятой).
           region: normalizeCity(it.address),
           price: Number(it.price ?? 0),
           currentBid: 0,
@@ -300,25 +329,23 @@ export class AvitoAdapter implements IAvitoAdapter {
           const spendByKey = new Map<string, number>();
           let chargesCount = 0;
           for (const op of ops) {
+            const cls = this.classifyOp(op);
+            // Per-item расходы и сторно с itemId считаем здесь
+            if (cls !== 'charge_per_item' && cls !== 'refund') continue;
             const itemId = op.itemId;
-            // Расход — только то, что относится к конкретному объявлению.
-            // Пополнения баланса/CPA-авансы итемом не привязаны и не считаются.
-            if (itemId == null) continue;
+            if (itemId == null) continue; // refund без itemId — не наш случай
             const amount = Number(
               op.amountTotal ?? op.amountRub ?? op.amount ?? 0
             );
             const ts = String(op.updatedAt ?? op.operationDate ?? '');
             if (!ts || amount === 0) continue;
-            // В Avito суммы приходят положительными, тип определяется через
-            // operationType / serviceType. «Резервирование средств под услугу»
-            // или любой serviceType in (vas, cpa, cpc, cpx) — это и есть списание.
             chargesCount++;
             const date = ts.slice(0, 10);
             const key = `${itemId}|${date}`;
-            // Берём абсолютное значение на случай если когда-нибудь придёт отрицательное.
+            const sign = cls === 'refund' ? -1 : 1;
             spendByKey.set(
               key,
-              (spendByKey.get(key) ?? 0) + Math.abs(amount)
+              (spendByKey.get(key) ?? 0) + sign * Math.abs(amount)
             );
           }
           // Накладываем на out по item+date.
@@ -490,10 +517,50 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
-   * Тянет операции и фильтрует только списания БЕЗ itemId — это и есть
-   * «общие расходы аккаунта»: рассылки, услуги по аккаунту, прочие.
-   * Пополнения баланса (operationType содержит «аванс» или «пополнен»)
-   * исключаются.
+   * Классифицирует операцию из operations_history. Используется и в
+   * fetchAccountCharges (per-account), и в fetchMetrics (per-item).
+   *
+   * Возвращает:
+   *  - 'charge_per_item' — расход на конкретное объявление (есть itemId)
+   *  - 'charge_account'  — общий расход аккаунта (рассылки, CPA-аванс)
+   *  - 'refund'          — сторно/возврат (вычитается из расхода)
+   *  - 'topup'           — пополнение Авито Кошелька с карты (НЕ расход)
+   *  - 'unknown'         — игнорируем
+   */
+  private classifyOp(op: Record<string, unknown>):
+    | 'charge_per_item'
+    | 'charge_account'
+    | 'refund'
+    | 'topup'
+    | 'unknown' {
+    const opType = String(op.operationType ?? '').toLowerCase();
+    const opName = String(op.operationName ?? '').toLowerCase();
+    const serviceType = String(op.serviceType ?? '').toLowerCase();
+    // Сторно — возврат, вычитается из расхода
+    if (opType.includes('сторно')) return 'refund';
+    // Пополнение Авито Кошелька — не расход на рекламу
+    // (operationType: "аванс" + operationName: "Пополнение Авито Кошелька")
+    if (opName.includes('пополнение авито кошелька')) return 'topup';
+    if (opName.includes('пополнение кошелька')) return 'topup';
+    // Внесение CPA-аванса = деньги ушли на рекламу (с кошелька на CPA-баланс)
+    if (opType.includes('внесение cpa') || opType.includes('cpa аванс')) {
+      return 'charge_account';
+    }
+    // Резервирование под услугу
+    if (
+      opType.includes('резервирование') ||
+      ['vas', 'cpa', 'cpc', 'cpx'].includes(serviceType)
+    ) {
+      return op.itemId != null ? 'charge_per_item' : 'charge_account';
+    }
+    // Если есть itemId — расход по объявлению
+    if (op.itemId != null) return 'charge_per_item';
+    return 'unknown';
+  }
+
+  /**
+   * Общие расходы аккаунта: рассылки, CPA-авансы, прочее без itemId.
+   * Сторно вычитаются (отрицательной записью).
    */
   async fetchAccountCharges(opts?: {
     dateFrom?: string;
@@ -518,27 +585,25 @@ export class AvitoAdapter implements IAvitoAdapter {
       const ops = data.result?.operations ?? [];
       const out: AccountCharge[] = [];
       for (const op of ops) {
-        // Только то, что НЕ привязано к объявлению (расходы без itemId).
-        if (op.itemId != null) continue;
-        const opType = String(op.operationType ?? '').toLowerCase();
-        const opName = String(op.operationName ?? '');
-        // Пополнения исключаем — это входящие, а не списания.
-        if (
-          opType.includes('аванс') ||
-          opType.includes('пополнен') ||
-          opName.toLowerCase().includes('пополнение')
-        ) {
-          continue;
-        }
+        const cls = this.classifyOp(op);
+        if (cls === 'unknown' || cls === 'topup') continue;
+        // per-item расходы не относятся к общим расходам — пропускаем
+        if (cls === 'charge_per_item') continue;
         const amount = Number(op.amountTotal ?? op.amountRub ?? op.amount ?? 0);
         const ts = String(op.updatedAt ?? op.operationDate ?? '');
         if (!ts || amount === 0) continue;
+        const opName = String(op.operationName ?? '');
+        const serviceName = String(op.serviceName ?? '');
+        const description =
+          cls === 'refund'
+            ? `Сторно: ${serviceName || opName || 'услуга'}`
+            : opName ||
+              (serviceName ? `Услуга: ${serviceName}` : 'Расход аккаунта');
         out.push({
           date: ts.slice(0, 10),
-          amount: Math.abs(amount),
-          description:
-            opName ||
-            (op.serviceName ? `Услуга: ${op.serviceName}` : 'Расход аккаунта'),
+          // Сторно — отрицательная сумма, расход — положительная
+          amount: cls === 'refund' ? -Math.abs(amount) : Math.abs(amount),
+          description,
         });
       }
       return out;
@@ -582,18 +647,34 @@ export class AvitoAdapter implements IAvitoAdapter {
 
   /**
    * Получить баланс аккаунта Avito.
-   * Параллельно дёргаем 2 ручки:
+   * Делаем 3 параллельных запроса:
    *   • /api/account/balance        → real + bonus
-   *   • /api/account/cpa-balance    → CPA-аванс (если подключено)
+   *   • /api/account/cpa-balance    → CPA-аванс через Avito (если ручка работает)
+   *   • /api/account/operations     → fallback: считаем CPA-аванс по сальдо
+   *     (внесения CPA-аванса минус сторно/возвраты за 90 дней)
    */
   async fetchBalance(): Promise<AvitoBalance | null> {
     if (this.settings.mode !== 'api') return null;
     if (!PROXY_BASE) return null;
     try {
-      const [bal, cpa] = await Promise.allSettled([
+      const today = new Date();
+      const past = new Date(today);
+      past.setDate(today.getDate() - 90);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      const dtFrom = `${fmt(past)}T00:00:00Z`;
+      const dtTo = `${fmt(today)}T23:59:59Z`;
+      const [bal, cpa, ops] = await Promise.allSettled([
         proxyFetch<Record<string, unknown>>('/api/account/balance', this.headers()),
         proxyFetch<Record<string, unknown>>(
           '/api/account/cpa-balance',
+          this.headers()
+        ),
+        proxyFetch<{
+          result?: { operations?: Array<Record<string, unknown>> };
+        }>(
+          `/api/account/operations?dateFrom=${encodeURIComponent(
+            dtFrom
+          )}&dateTo=${encodeURIComponent(dtTo)}`,
           this.headers()
         ),
       ]);
@@ -611,15 +692,28 @@ export class AvitoAdapter implements IAvitoAdapter {
         const root =
           (cpa.value.result as Record<string, unknown> | undefined) ??
           (cpa.value as Record<string, unknown>);
-        // Авито отдаёт разные поля в разных версиях — пробуем все
         advance = Number(
-          root.advance ??
-            root.balance ??
-            root.amount ??
-            root.cpaBalance ??
-            root.realBalance ??
-            0
+          root.advance ?? root.balance ?? root.amount ?? root.cpaBalance ?? 0
         );
+      }
+      // Если основная ручка не дала аванс — посчитаем по операциям:
+      // сумма всех «внесений CPA аванса» минус сторно за 90 дней.
+      // Это даёт примерный остаток (не учитывая фактические списания, которые
+      // в operations_history часто не приходят отдельной строкой).
+      if (advance === 0 && ops.status === 'fulfilled') {
+        const list = ops.value.result?.operations ?? [];
+        let sumIn = 0;
+        let sumRefund = 0;
+        for (const op of list) {
+          const opType = String(op.operationType ?? '').toLowerCase();
+          const amount = Number(op.amountTotal ?? op.amountRub ?? 0);
+          if (opType.includes('внесение cpa') || opType.includes('cpa аванс')) {
+            sumIn += amount;
+          } else if (opType.includes('сторно')) {
+            sumRefund += amount;
+          }
+        }
+        advance = Math.max(0, sumIn + sumRefund); // сторно = плюс к балансу
       }
       return {
         real,
