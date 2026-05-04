@@ -184,6 +184,7 @@ export class AvitoAdapter implements IAvitoAdapter {
         const slice = itemIds.slice(i, i + 200);
         const data = await proxyFetch<{
           result?: { items?: unknown[] };
+          _v2_unavailable?: boolean;
           error?: string;
           status?: number;
         }>('/api/stats/items/v2', {
@@ -204,9 +205,12 @@ export class AvitoAdapter implements IAvitoAdapter {
           }),
           headers: { 'Content-Type': 'application/json' },
         });
-        // Если backend вернул error поле — v2 не работает, выходим без падения
-        if (data.error) {
-          console.info('[AvitoAdapter] /stats/v2 недоступен:', data.error);
+        // Backend сообщил что v2 не работает у Avito — без красного в Network
+        if (data._v2_unavailable || data.error) {
+          console.info(
+            '[AvitoAdapter] /stats/v2 недоступен у этого аккаунта/тарифа:',
+            data.error ?? `status ${data.status}`
+          );
           return [];
         }
         const list = (data.result?.items ?? []) as Array<{
@@ -748,7 +752,13 @@ export class AvitoAdapter implements IAvitoAdapter {
           bids?: Array<{ itemId: number | string; bid?: number; manual?: boolean }>;
         };
         bids?: Array<{ itemId: number | string; bid?: number }>;
+        _note?: string;
       }>('/api/cpx/bids', this.headers());
+      // Backend вернул "CPA не подключён" — это нормально, не пишем warn
+      if (data._note) {
+        console.info('[AvitoAdapter] fetchBids:', data._note);
+        return new Map();
+      }
       const bids =
         (data.result?.bids ?? data.bids ?? []) as Array<{
           itemId: number | string;
@@ -761,7 +771,8 @@ export class AvitoAdapter implements IAvitoAdapter {
       }
       return out;
     } catch (e) {
-      console.warn('[AvitoAdapter] fetchBids error (возможно, CPA не подключён):', e);
+      // тихая ошибка — возвращаем пустую мапу, без красного варнинга
+      console.info('[AvitoAdapter] fetchBids недоступен:', e);
       return new Map();
     }
   }

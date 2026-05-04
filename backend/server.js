@@ -276,42 +276,40 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
 }));
 
 // /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent/cost).
-// Не у всех аккаунтов и тарифов работает. На 429/404/недоступности фронт
-// откатится на v1 + operations_history.
+// Не у всех аккаунтов и тарифов работает. Если Avito возвращает 400/404/429 —
+// проксируем как HTTP 200 с {error, status}, чтобы Network-вкладка не светилась
+// красным и фронт спокойно откатывался на v1.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
   try {
     const { dateFrom, dateTo, itemIds, fields } = req.body;
-    res.json(
-      await avitoFetch(
-        accountId,
-        `/stats/v2/accounts/${accountId}/items`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            dateFrom,
-            dateTo,
-            itemIds: itemIds ?? [],
-            fields:
-              fields ?? [
-                'views',
-                'uniqViews',
-                'contacts',
-                'uniqContacts',
-                'favorites',
-                'spent',
-                'cost',
-              ],
-            periodGrouping: 'day',
-          }),
-        }
-      )
+    const result = await avitoFetch(
+      accountId,
+      `/stats/v2/accounts/${accountId}/items`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          dateFrom,
+          dateTo,
+          itemIds: itemIds ?? [],
+          fields:
+            fields ?? [
+              'uniqViews',
+              'contacts',
+              'favorites',
+              'spent',
+              'cost',
+            ],
+          periodGrouping: 'day',
+        }),
+      }
     );
+    res.json(result);
   } catch (e) {
-    // Возвращаем структурированную ошибку без 500 — фронту понятно, что v2 не сработал.
-    res.status(e.status ?? 500).json({
+    // Любая ошибка от Avito → 200 OK + null/error, фронт перейдёт на v1 без красного в Network.
+    res.json({
+      _v2_unavailable: true,
       error: e.message,
       status: e.status ?? 500,
-      body: e.body,
     });
   }
 }));
@@ -344,9 +342,18 @@ app.get('/api/promotion/services', withAcc(async (accountId, req, res) => {
   );
 }));
 
-// CPA-цена целевого действия — установка / получение
+// CPA-цена целевого действия — установка / получение.
+// Если у аккаунта не подключён CPA — Avito ответит 404. Не светим красным.
 app.get('/api/cpx/bids', withAcc(async (accountId, _req, res) => {
-  res.json(await avitoFetch(accountId, '/cpxpromo/1/bids/get'));
+  try {
+    res.json(await avitoFetch(accountId, '/cpxpromo/1/bids/get'));
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ result: { bids: [] }, _note: 'CPA не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
 }));
 
 app.post('/api/cpx/bids/manual', withAcc(async (accountId, req, res) => {
