@@ -214,11 +214,23 @@ function cleanCity(raw: string): string {
   return first.replace(/^г\.?\s*/i, '').trim() || '—';
 }
 
+/**
+ * Тип записи о расходе аккаунта (промо-пул, рассылки, сторно).
+ * Дублируем структуру из AvitoAdapter.AccountCharge, чтобы analytics не зависел
+ * от services/.
+ */
+export type AccountChargeLite = {
+  date: string;
+  amount: number;
+  kind?: 'promotion_pool' | 'account_other' | 'refund';
+};
+
 export function itemsInDateRange(
   items: AvitoItem[],
   metrics: ItemMetrics[],
   dateFrom?: string,
-  dateTo?: string
+  dateTo?: string,
+  accountCharges?: AccountChargeLite[]
 ): AvitoItem[] {
   // Сначала нормализуем регион (на случай старых данных в localStorage).
   const normalizedItems = items.map((it) => ({ ...it, region: cleanCity(it.region) }));
@@ -226,6 +238,15 @@ export function itemsInDateRange(
   const from = dateFrom ?? '0000-01-01';
   const to = dateTo ?? '9999-12-31';
   const filtered = metrics.filter((m) => m.date >= from && m.date <= to);
+
+  // ─── Сумма CPx/CPA-аванса за период (это «расход на рекламу» который нужно
+  // распределить по объявлениям пропорционально просмотрам, т.к. Avito API не
+  // отдаёт детализацию).
+  const cpxPoolInPeriod = (accountCharges ?? [])
+    .filter((c) => c.date >= from && c.date <= to)
+    .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')
+    .reduce((s, c) => s + (c.amount || 0), 0);
+
   if (filtered.length === 0) {
     return normalizedItems.map((it) => ({
       ...it,
@@ -244,12 +265,33 @@ export function itemsInDateRange(
     cur.spend += m.spend;
     sumByItem.set(m.itemId, cur);
   }
+
+  // Считаем общую сумму просмотров за период (для расчёта пропорции CPx)
+  const totalViewsInPeriod = Array.from(sumByItem.values()).reduce(
+    (s, v) => s + v.views,
+    0
+  );
+
   return normalizedItems.map((it) => {
     const sum = sumByItem.get(it.id);
     if (!sum) {
       return { ...it, views: 0, contacts: 0, favorites: 0, spend: 0 };
     }
-    return { ...it, ...sum };
+    // Распределяем CPx-пул пропорционально доле просмотров этого объявления.
+    // Это даёт приближение per-item расхода для CPx-тарифа без CSV-импорта.
+    const cpxShare =
+      totalViewsInPeriod > 0 && cpxPoolInPeriod > 0
+        ? (sum.views / totalViewsInPeriod) * cpxPoolInPeriod
+        : 0;
+    return {
+      ...it,
+      views: sum.views,
+      contacts: sum.contacts,
+      favorites: sum.favorites,
+      // К per-item расходу из operations_history (VAS типа XL) добавляем
+      // распределённую долю CPx-пула.
+      spend: Math.round(sum.spend + cpxShare),
+    };
   });
 }
 

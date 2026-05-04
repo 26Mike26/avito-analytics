@@ -80,10 +80,17 @@ export default function Items() {
   );
 
   // Пересчитываем items: суммы метрик за выбранный период.
-  // Это и есть «настоящий» фильтр по дням, который раньше не работал.
+  // CPx-аванс распределяется пропорционально просмотрам по объявлениям.
   const itemsForPeriod = useMemo(
-    () => itemsInDateRange(items, metrics, period.from, period.to),
-    [items, metrics, period.from, period.to]
+    () =>
+      itemsInDateRange(
+        items,
+        metrics,
+        period.from,
+        period.to,
+        accountCharges
+      ),
+    [items, metrics, period.from, period.to, accountCharges]
   );
 
   const categories = useMemo(
@@ -145,31 +152,31 @@ export default function Items() {
       title="Объявления"
       subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
     >
-      {/* Подсказка: если расход в operations_history агрегированный (CPx-тариф) —
-          точная per-item детализация только через CSV-импорт из Авито Pro. */}
+      {/* Подсказка: на CPx-тарифе расход распределён по просмотрам. */}
       {promotionPoolSpend > 0 && (
         <div className="card border border-blue-500/30 bg-blue-500/5 p-3 mb-4 text-sm flex flex-wrap items-start gap-3">
           <Filter className="w-4 h-4 text-blue-300 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-white font-semibold mb-1">
-              Расход за просмотры (CPx) — агрегированный
+              Расход за просмотры распределён пропорционально показам
             </div>
             <div className="text-ink-300 leading-relaxed">
-              За период {period.from} — {period.to} списано{' '}
+              За период списано{' '}
               <span className="text-white">{formatRub(promotionPoolSpend)}</span> на
-              продвижение через CPx (оплата за просмотры). Avito API не отдаёт
-              расход по каждому объявлению через operations_history. Чтобы увидеть
-              точные суммы — экспортируйте отчёт из Авито Pro → Статистика →
-              Детализация → «Скачать отчёт» и загрузите CSV в{' '}
+              продвижение (CPx-тариф, оплата за просмотры). Avito API
+              эту сумму не делит по объявлениям — мы делим её
+              пропорционально количеству просмотров каждого объявления за тот же период.
+              Это близко к реальному распределению, но может отличаться от детализации
+              в Авито Pro. Для точных цифр —{' '}
               <Link to="/settings" className="text-accent hover:underline">
-                Настройки → Импорт
-              </Link>
-              . Парсер уже понимает колонку «Расходы на объявления».
+                импортируйте CSV
+              </Link>{' '}
+              из Авито Pro → Статистика → Детализация.
             </div>
             {accountOtherSpend > 0 && (
               <div className="mt-1 text-ink-400 text-xs">
-                Дополнительно общие расходы аккаунта (рассылки):{' '}
-                {formatRub(accountOtherSpend)}.
+                Рассылки (без объявления): {formatRub(accountOtherSpend)} — не включены
+                в колонку «Расход».
               </div>
             )}
           </div>
