@@ -398,6 +398,53 @@ app.get('/api/promotion/services', withAcc(async (accountId, req, res) => {
 
 // CPA-цена целевого действия — установка / получение.
 // Если у аккаунта не подключён CPA — Avito ответит 404. Не светим красным.
+app.get('/api/auction/bids', withAcc(async (accountId, req, res) => {
+  try {
+    const fromItemID = Math.max(Number(req.query.fromItemID ?? 0) || 0, 0);
+    const batchSize = Math.min(
+      Math.max(Number(req.query.batchSize ?? 200) || 200, 1),
+      200
+    );
+    const qs = new URLSearchParams({
+      fromItemID: String(fromItemID),
+      batchSize: String(batchSize),
+    });
+    res.json(await avitoFetch(accountId, `/auction/1/bids?${qs.toString()}`));
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ items: [], _note: 'CPA-аукцион не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
+app.post('/api/auction/bids', withAcc(async (accountId, req, res) => {
+  const source = Array.isArray(req.body?.items) ? req.body.items : [];
+  const items = source.slice(0, 200).flatMap((row) => {
+    const itemID = Number(row.itemID ?? row.itemId);
+    const pricePenny = Number(row.pricePenny ?? row.bidPenny);
+    if (!Number.isFinite(itemID) || !Number.isFinite(pricePenny)) return [];
+    return [{
+      itemID,
+      pricePenny: Math.max(1, Math.round(pricePenny)),
+      ...(row.expirationTime === undefined
+        ? {}
+        : { expirationTime: row.expirationTime }),
+    }];
+  });
+  if (items.length === 0) {
+    res.status(400).json({ error: 'Нужен items[] с itemID и pricePenny' });
+    return;
+  }
+  res.json(
+    await avitoFetch(accountId, '/auction/1/bids', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    })
+  );
+}));
+
 app.get('/api/cpx/bids', withAcc(async (accountId, _req, res) => {
   try {
     res.json(await avitoFetch(accountId, '/cpxpromo/1/bids/get'));
@@ -477,6 +524,8 @@ app.listen(PORT, () => {
   console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, metrics, grouping } — опц., per-item spend');
   console.log('  GET  /api/stats/calls?dateFrom=...&dateTo=...');
   console.log('  GET  /api/promotion/services?itemIds=...');
+  console.log('  GET  /api/auction/bids?fromItemID=0&batchSize=200');
+  console.log('  POST /api/auction/bids        { items: [{ itemID, pricePenny }] }');
   console.log('  GET  /api/cpx/bids');
   console.log('  POST /api/cpx/bids/manual');
   console.log('  GET  /api/messenger/chats?unread_only=true');

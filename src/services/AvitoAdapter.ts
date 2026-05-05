@@ -57,6 +57,16 @@ export type AvitoBalance = {
   fetchedAt: string;
 };
 
+export type AvitoBidInfo = {
+  itemId: string;
+  currentBid: number;
+  availableBids: number[];
+  minBid?: number;
+  maxBid?: number;
+  bidGoodness?: number;
+  bidExpiresAt?: string;
+};
+
 /**
  * Слой интеграции с Avito API.
  *
@@ -71,6 +81,7 @@ export interface IAvitoAdapter {
   fetchItems(): Promise<AvitoItem[]>;
   fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]>;
   updateBid(itemId: string, newBid: number): Promise<void>;
+  updateBids(items: Array<{ itemId: string; bid: number }>): Promise<void>;
   testConnection(): Promise<{ ok: boolean; message: string }>;
   /**
    * Регистрирует аккаунт на backend-прокси. Прокси сохранит креды у себя
@@ -97,9 +108,9 @@ export interface IAvitoAdapter {
   fetchBalance(): Promise<AvitoBalance | null>;
   /**
    * Подтянуть текущие ставки CPx (цена за целевое действие) по объявлениям.
-   * Возвращает Map<itemId → ставка_в_рублях>. В демо-режиме — пустая мапа.
+   * Возвращает Map<itemId → ставка и доступные цены>. В демо-режиме — пустая мапа.
    */
-  fetchBids(): Promise<Map<string, number>>;
+  fetchBids(): Promise<Map<string, AvitoBidInfo>>;
   /**
    * Подтянуть общие расходы аккаунта (без привязки к объявлению):
    * рассылки, услуги по аккаунту, прочие списания.
@@ -201,6 +212,43 @@ function firstPositive(...values: unknown[]): number {
     if (parsed > 0) return parsed;
   }
   return 0;
+}
+
+function kopecksToRub(value: unknown): number {
+  const parsed = num(value);
+  return parsed > 0 ? Math.round(parsed / 100) : 0;
+}
+
+function normalizeBidInfo(raw: Record<string, unknown>): AvitoBidInfo | null {
+  const itemIdRaw = raw.itemID ?? raw.itemId;
+  if (itemIdRaw == null) return null;
+  const itemId = String(itemIdRaw);
+  const availablePrices = Array.isArray(raw.availablePrices)
+    ? raw.availablePrices
+    : [];
+  const availableBids = availablePrices
+    .flatMap((price) => {
+      const record = asRecord(price);
+      const bid = kopecksToRub(record?.pricePenny);
+      return bid > 0 ? [bid] : [];
+    })
+    .sort((a, b) => a - b);
+  const currentBid = kopecksToRub(raw.pricePenny);
+  const current = currentBid > 0 ? currentBid : availableBids[0] ?? 0;
+  return {
+    itemId,
+    currentBid: current,
+    availableBids,
+    minBid: availableBids[0],
+    maxBid: availableBids[availableBids.length - 1],
+    bidGoodness:
+      availablePrices
+        .map((price) => asRecord(price))
+        .find((price) => kopecksToRub(price?.pricePenny) === current)
+        ?.goodness as number | undefined,
+    bidExpiresAt:
+      typeof raw.expirationTime === 'string' ? raw.expirationTime : undefined,
+  };
 }
 
 function pickItemId(row: Record<string, unknown>): string | null {
@@ -684,16 +732,75 @@ export class AvitoAdapter implements IAvitoAdapter {
 
   async updateBid(itemId: string, newBid: number): Promise<void> {
     if (this.settings.mode === 'api') {
+      const bidRub = Math.max(1, Math.round(newBid));
       try {
-        await proxyFetch('/api/cpx/bids/manual', {
+        await proxyFetch('/api/auction/bids', {
           method: 'POST',
           ...this.headers(),
-          body: JSON.stringify({ itemId: Number(itemId), bid: Math.round(newBid) }),
+          body: JSON.stringify({
+            items: [{
+              itemID: Number(itemId),
+              pricePenny: bidRub * 100,
+              expirationTime: null,
+            }],
+          }),
           headers: { 'Content-Type': 'application/json' },
         });
       } catch (e) {
-        console.warn('[AvitoAdapter] updateBid error:', e);
+        console.info('[AvitoAdapter] auction bids недоступен, fallback на cpx:', e);
+        try {
+          await proxyFetch('/api/cpx/bids/manual', {
+            method: 'POST',
+            ...this.headers(),
+            body: JSON.stringify({ itemId: Number(itemId), bid: bidRub }),
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (fallbackError) {
+          console.warn('[AvitoAdapter] updateBid error:', fallbackError);
+        }
       }
+    }
+  }
+
+  async updateBids(items: Array<{ itemId: string; bid: number }>): Promise<void> {
+    if (this.settings.mode !== 'api') return;
+    const payload = items
+      .slice(0, 200)
+      .flatMap((item) => {
+        const itemID = Number(item.itemId);
+        const bidRub = Math.max(1, Math.round(item.bid));
+        if (!Number.isFinite(itemID)) return [];
+        return [{
+          itemID,
+          pricePenny: bidRub * 100,
+          expirationTime: null,
+        }];
+      });
+    if (payload.length === 0) return;
+    try {
+      await proxyFetch('/api/auction/bids', {
+        method: 'POST',
+        ...this.headers(),
+        body: JSON.stringify({ items: payload }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (e) {
+      console.warn('[AvitoAdapter] updateBids error:', e);
+      await Promise.all(
+        payload.map((item) =>
+          proxyFetch('/api/cpx/bids/manual', {
+            method: 'POST',
+            ...this.headers(),
+            body: JSON.stringify({
+              itemId: item.itemID,
+              bid: Math.round(item.pricePenny / 100),
+            }),
+            headers: { 'Content-Type': 'application/json' },
+          }).catch((fallbackError) =>
+            console.warn('[AvitoAdapter] updateBids fallback error:', fallbackError)
+          )
+        )
+      );
     }
   }
 
@@ -905,13 +1012,43 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
-   * Тянет CPA-ставки по объявлениям через /cpxpromo/1/bids/get.
-   * Возвращает Map<itemId, bid в рублях>. Если у пользователя нет CPA-кампаний
+   * Тянет CPA-ставки по объявлениям через /auction/1/bids.
+   * Возвращает Map<itemId, ставка и доступные цены>. Если у пользователя нет CPA-кампаний
    * или эндпоинт недоступен — возвращает пустую мапу (это нормально).
    */
-  async fetchBids(): Promise<Map<string, number>> {
+  async fetchBids(): Promise<Map<string, AvitoBidInfo>> {
     if (this.settings.mode !== 'api') return new Map();
     if (!PROXY_BASE) return new Map();
+    const out = new Map<string, AvitoBidInfo>();
+    try {
+      let fromItemID = 0;
+      for (let page = 0; page < 50; page++) {
+        const data = await proxyFetch<{
+          items?: Array<Record<string, unknown>>;
+          _note?: string;
+        }>(
+          `/api/auction/bids?fromItemID=${fromItemID}&batchSize=200`,
+          this.headers()
+        );
+        if (data._note) {
+          console.info('[AvitoAdapter] fetchBids:', data._note);
+          break;
+        }
+        const list = data.items ?? [];
+        let maxItemID = fromItemID;
+        for (const row of list) {
+          const info = normalizeBidInfo(row);
+          if (!info) continue;
+          out.set(info.itemId, info);
+          maxItemID = Math.max(maxItemID, Number(info.itemId) || 0);
+        }
+        if (list.length < 200 || maxItemID <= fromItemID) break;
+        fromItemID = maxItemID;
+      }
+      if (out.size > 0) return out;
+    } catch (e) {
+      console.info('[AvitoAdapter] auction bids недоступен, fallback на cpx:', e);
+    }
     try {
       const data = await proxyFetch<{
         result?: {
@@ -930,10 +1067,17 @@ export class AvitoAdapter implements IAvitoAdapter {
           itemId: number | string;
           bid?: number;
         }>;
-      const out = new Map<string, number>();
+      const out = new Map<string, AvitoBidInfo>();
       for (const b of bids) {
         if (b.itemId == null) continue;
-        out.set(String(b.itemId), Number(b.bid ?? 0));
+        const currentBid = Number(b.bid ?? 0);
+        out.set(String(b.itemId), {
+          itemId: String(b.itemId),
+          currentBid,
+          availableBids: currentBid > 0 ? [currentBid] : [],
+          minBid: currentBid > 0 ? currentBid : undefined,
+          maxBid: currentBid > 0 ? currentBid : undefined,
+        });
       }
       return out;
     } catch (e) {

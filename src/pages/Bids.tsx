@@ -112,6 +112,7 @@ export default function Bids() {
                 <th className="table-th">Объявление</th>
                 <th className="table-th">Категория</th>
                 <th className="table-th text-right">Текущая</th>
+                <th className="table-th text-right">Доступные</th>
                 <th className="table-th text-right">Рекомендуемая</th>
                 <th className="table-th text-right">Δ</th>
                 <th className="table-th text-right">Прогноз расхода</th>
@@ -141,6 +142,24 @@ export default function Bids() {
                   <td className="table-td whitespace-nowrap">{item.category}</td>
                   <td className="table-td text-right whitespace-nowrap">
                     {item.currentBid} ₽
+                  </td>
+                  <td className="table-td text-right whitespace-nowrap">
+                    {item.minBid && item.maxBid ? (
+                      <div>
+                        <div className="text-white">
+                          {item.minBid === item.maxBid
+                            ? `${item.minBid} ₽`
+                            : `${item.minBid}–${item.maxBid} ₽`}
+                        </div>
+                        {item.availableBids && item.availableBids.length > 1 && (
+                          <div className="text-xs text-ink-500">
+                            {item.availableBids.length} вариантов
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-ink-500">—</span>
+                    )}
                   </td>
                   <td className="table-td text-right whitespace-nowrap">
                     {rec.recommended} ₽

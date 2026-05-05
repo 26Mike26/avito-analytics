@@ -230,6 +230,13 @@ export default function ItemDetail() {
               <div className="flex items-center gap-3 mt-2 text-xs text-ink-400">
                 <span>Текущая: {item.currentBid} ₽</span>
                 <span>Рекомендуем: {item.recommendedBid} ₽</span>
+                {item.minBid && item.maxBid && (
+                  <span>
+                    Доступно: {item.minBid === item.maxBid
+                      ? `${item.minBid} ₽`
+                      : `${item.minBid}–${item.maxBid} ₽`}
+                  </span>
+                )}
                 <span>
                   Прогноз расхода: {formatRub(bidRec.forecastSpend)} · лидов ~
                   {bidRec.forecastContacts}
@@ -301,6 +308,8 @@ export default function ItemDetail() {
                 type="number"
                 className="input"
                 placeholder={`Сейчас: ${item.currentBid} ₽`}
+                min={item.minBid ?? 1}
+                max={item.maxBid}
                 value={bidDraft}
                 onChange={(e) => setBidDraft(e.target.value)}
               />

@@ -55,6 +55,21 @@ function genUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function normalizeBidForItem(item: AvitoItem, requestedBid: number): number {
+  const requested = Math.max(1, Math.round(requestedBid));
+  const available = (item.availableBids ?? [])
+    .filter((bid) => Number.isFinite(bid) && bid > 0)
+    .sort((a, b) => a - b);
+  if (available.length > 0) {
+    return available.reduce((best, bid) =>
+      Math.abs(bid - requested) < Math.abs(best - requested) ? bid : best
+    );
+  }
+  const min = item.minBid && item.minBid > 0 ? item.minBid : 1;
+  const max = item.maxBid && item.maxBid > 0 ? item.maxBid : Number.POSITIVE_INFINITY;
+  return Math.min(Math.max(requested, min), max);
+}
+
 function loadAccounts(): Record<string, AccountData> {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
@@ -628,7 +643,8 @@ export const useStore = create<Store>((set, get) => {
       const oldItem = acc.items.find((i) => i.id === itemId);
       if (!oldItem) return;
       const oldBid = oldItem.currentBid;
-      const updatedBid = Math.max(1, Math.round(newBid));
+      const updatedBid = normalizeBidForItem(oldItem, newBid);
+      if (oldBid === updatedBid) return;
       const items = acc.items.map((i) =>
         i.id === itemId ? { ...i, currentBid: updatedBid } : i
       );
@@ -750,7 +766,8 @@ export const useStore = create<Store>((set, get) => {
         if (rec.diffPercent === 0) return item;
         if (rec.diffPercent > limitPercent) return item;
         if (rec.diffPercent > 0 && item.contacts === 0) return item;
-        const newBid = rec.recommended;
+        const newBid = normalizeBidForItem(item, rec.recommended);
+        if (newBid === item.currentBid) return item;
         newHistory.push({
           id: genUuid(),
           itemId: item.id,
@@ -793,6 +810,9 @@ export const useStore = create<Store>((set, get) => {
           console.warn('[supabase] applyAllBidRecommendations:', e);
         }
       })();
+      void adapter.updateBids(
+        newHistory.map((h) => ({ itemId: h.itemId, bid: h.newBid }))
+      );
       return applied;
     },
 
@@ -863,8 +883,14 @@ export const useStore = create<Store>((set, get) => {
         const bids = await adapter.fetchBids();
         if (bids.size > 0) {
           for (const it of items) {
-            const b = bids.get(String(it.id));
-            if (b && b > 0) it.currentBid = b;
+            const bid = bids.get(String(it.id));
+            if (!bid) continue;
+            if (bid.currentBid > 0) it.currentBid = bid.currentBid;
+            it.availableBids = bid.availableBids;
+            it.minBid = bid.minBid;
+            it.maxBid = bid.maxBid;
+            it.bidGoodness = bid.bidGoodness;
+            it.bidExpiresAt = bid.bidExpiresAt;
           }
         }
       } catch (e) {
