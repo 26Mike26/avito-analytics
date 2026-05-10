@@ -21,6 +21,9 @@ export default function Bids() {
 
   const rows = useMemo(() => {
     return items
+      // Управление ставками имеет смысл только для активных объявлений —
+      // у архивных и приостановленных ставку менять некуда.
+      .filter((item) => item.status === 'active')
       .map((item) => ({ item, rec: calculateBidRecommendation(item, kpi, metrics) }))
       .filter((r) => {
         if (filter === 'increase') return r.rec.diffPercent > 0;
