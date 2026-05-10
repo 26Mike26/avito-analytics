@@ -48,6 +48,7 @@ export default function Items() {
   const metrics = useStore((s) => s.metrics);
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
+  const spendings = useStore((s) => s.spendings);
   const kpi = useStore((s) => s.kpi);
   const setItemBid = useStore((s) => s.setItemBid);
 
@@ -80,9 +81,17 @@ export default function Items() {
     [chargesInPeriod]
   );
 
+  // Точная сумма расхода на рекламу за период из /stats/v2/spendings
+  const adsTotalFromSpendings = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    return inRange.reduce((s, d) => s + d.ads, 0);
+  }, [spendings, period.from, period.to]);
+
   // Пересчитываем items: суммы метрик за выбранный период.
-  // Если /stats/v2 дал точные per-item spend — используем их.
-  // Иначе CPx-аванс распределяется пропорционально просмотрам.
+  // Приоритет: точное ads из spendings → распределение CPx-аванса → 0.
   const itemsForPeriod = useMemo(
     () =>
       itemsInDateRange(
@@ -91,9 +100,18 @@ export default function Items() {
         period.from,
         period.to,
         accountCharges,
-        hasPerItemSpend
+        hasPerItemSpend,
+        adsTotalFromSpendings
       ),
-    [items, metrics, period.from, period.to, accountCharges, hasPerItemSpend]
+    [
+      items,
+      metrics,
+      period.from,
+      period.to,
+      accountCharges,
+      hasPerItemSpend,
+      adsTotalFromSpendings,
+    ]
   );
 
   const categories = useMemo(

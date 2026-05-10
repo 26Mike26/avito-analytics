@@ -252,7 +252,13 @@ export function itemsInDateRange(
    * Если true, расход в metrics уже per-item точный (например пришёл из /stats/v2)
    * — не распределяем CPx-аванс повторно по показам.
    */
-  hasPerItemSpend = false
+  hasPerItemSpend = false,
+  /**
+   * Точная сумма расхода на рекламу за период из /stats/v2/spendings (ads = promotion+presence).
+   * Если задано — распределяем именно её пропорционально показам, а не CPx-аванс из operations.
+   * Это даёт точные per-item расходы согласованные с дашбордом.
+   */
+  adsTotalInPeriod?: number | null
 ): AvitoItem[] {
   // Сначала нормализуем регион (на случай старых данных в localStorage).
   const normalizedItems = items.map((it) => ({ ...it, region: cleanCity(it.region) }));
@@ -261,12 +267,15 @@ export function itemsInDateRange(
   const to = dateTo ?? '9999-12-31';
   const filtered = metrics.filter((m) => m.date >= from && m.date <= to);
 
-  // ─── Сумма CPx/CPA-аванса за период (это «расход на рекламу» который нужно
-  // распределить по объявлениям пропорционально просмотрам, т.к. Avito v1 не
-  // отдаёт детализацию). Если у нас уже есть точные per-item spend из v2 —
-  // НЕ распределяем второй раз, иначе будет двойной учёт.
+  // ─── Пул, который распределяем по объявлениям пропорционально показам.
+  // Приоритет источников (по точности):
+  //   1. adsTotalInPeriod  — точное число из /stats/v2/spendings (ads = promotion+presence)
+  //   2. CPx-аванс из operations_history (приближение)
+  //   0. Если v2 уже дал per-item spend в самих metrics — пропускаем (флаг hasPerItemSpend)
   const cpxPoolInPeriod = hasPerItemSpend
     ? 0
+    : adsTotalInPeriod != null && adsTotalInPeriod > 0
+    ? adsTotalInPeriod
     : (accountCharges ?? [])
         .filter((c) => c.date >= from && c.date <= to)
         .filter((c) => c.kind === 'promotion_pool' || c.kind === 'refund')

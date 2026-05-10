@@ -44,10 +44,19 @@ export default function Dashboard() {
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
+  // Точная сумма расхода на рекламу за период из /stats/v2/spendings.
+  // Считаем ДО useMemo для items, чтобы передать ads в распределение.
+  const adsTotalFromSpendings = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    return inRange.reduce((s, d) => s + d.ads, 0);
+  }, [spendings, period.from, period.to]);
+
   // Items с реальными суммами за выбранный период.
-  // accountCharges передаём, чтобы CPx-аванс распределился по объявлениям
-  // пропорционально просмотрам (для CPx-тарифа когда v2 spend недоступен).
-  // Если v2 уже дал per-item spend — hasPerItemSpend=true, не распределяем повторно.
+  // Если /stats/v2/spendings доступен — распределяем точное ads (promotion+presence)
+  // пропорционально показам. Иначе fallback на CPx-аванс из operations_history.
   const items = useMemo(
     () =>
       itemsInDateRange(
@@ -56,9 +65,18 @@ export default function Dashboard() {
         period.from,
         period.to,
         accountCharges,
-        hasPerItemSpend
+        hasPerItemSpend,
+        adsTotalFromSpendings
       ),
-    [allItems, metrics, period.from, period.to, accountCharges, hasPerItemSpend]
+    [
+      allItems,
+      metrics,
+      period.from,
+      period.to,
+      accountCharges,
+      hasPerItemSpend,
+      adsTotalFromSpendings,
+    ]
   );
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
@@ -87,16 +105,12 @@ export default function Dashboard() {
     [chargesInPeriod]
   );
   const stats = calculateAccountStats(items, kpi);
-  // ЕСЛИ /stats/v2/spendings доступен — используем точные суммы Avito Pro:
-  //   adsSpend = promotion (расход на рекламу)
-  //   accountOther = presence + commission + rest (тариф, комиссии, прочее)
-  // ИНАЧЕ — fallback на наше распределение через operations_history.
+  // Разбивка из /stats/v2/spendings (если доступно) — для отображения деталей.
   const spendingsInPeriod = useMemo(() => {
     if (!spendings) return null;
     const inRange = spendings.byDate.filter(
       (d) => d.date >= period.from && d.date <= period.to
     );
-    // Расход на рекламу = promotion + presence (CPx-расход у Avito идёт в presence)
     const promo = inRange.reduce((s, d) => s + d.promotion, 0);
     const pres = inRange.reduce((s, d) => s + d.presence, 0);
     const tot = inRange.reduce((s, d) => s + d.total, 0);
@@ -104,9 +118,9 @@ export default function Dashboard() {
     return { ads, promotion: promo, presence: pres, other: tot - ads, total: tot };
   }, [spendings, period.from, period.to]);
 
-  const adsSpend = spendingsInPeriod
-    ? spendingsInPeriod.ads
-    : stats.totalSpend;
+  // adsSpend = точно равен stats.totalSpend, т.к. items распределены через ads-pool.
+  // Гарантируем равенство — берём stats.totalSpend (который уже посчитан от распределённых items).
+  const adsSpend = stats.totalSpend;
   const otherSpend = spendingsInPeriod
     ? spendingsInPeriod.other
     : Math.max(0, accountOtherSpend);

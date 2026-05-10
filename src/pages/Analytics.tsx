@@ -34,6 +34,7 @@ export default function Analytics() {
   const metrics = useStore((s) => s.metrics);
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
+  const spendings = useStore((s) => s.spendings);
   const kpi = useStore((s) => s.kpi);
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
@@ -41,9 +42,16 @@ export default function Analytics() {
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
 
+  const adsTotalFromSpendings = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    return inRange.reduce((s, d) => s + d.ads, 0);
+  }, [spendings, period.from, period.to]);
+
   // Items с пересчётом расхода за период.
-  // Если v2 дал точные per-item spend — используем их.
-  // Иначе CPx-аванс распределяется пропорционально просмотрам.
+  // Приоритет: точное ads из spendings → распределение CPx → 0.
   const itemsForPeriod = useMemo(
     () =>
       itemsInDateRange(
@@ -52,9 +60,18 @@ export default function Analytics() {
         period.from,
         period.to,
         accountCharges,
-        hasPerItemSpend
+        hasPerItemSpend,
+        adsTotalFromSpendings
       ),
-    [allItems, metrics, period.from, period.to, accountCharges, hasPerItemSpend]
+    [
+      allItems,
+      metrics,
+      period.from,
+      period.to,
+      accountCharges,
+      hasPerItemSpend,
+      adsTotalFromSpendings,
+    ]
   );
 
   const categoriesList = useMemo(
@@ -86,29 +103,35 @@ export default function Analytics() {
       ),
     [metrics, filteredItems, period.from, period.to]
   );
-  const cpxByDate = useMemo(() => {
-    // Сумма CPx-пополнений по дням за период.
-    // Если v2 уже дал точный per-item spend — оставляем 0 (не двойной учёт).
-    if (hasPerItemSpend) return new Map<string, number>();
+  // Сумма ads-расхода (promotion+presence) по дням из /stats/v2/spendings.
+  // Если spendings нет — fallback на CPx-пополнения из operations.
+  const adsByDate = useMemo(() => {
     const m = new Map<string, number>();
+    if (hasPerItemSpend) return m; // metrics уже содержат точный spend
+    if (spendings) {
+      for (const d of spendings.byDate) {
+        if (d.date < period.from || d.date > period.to) continue;
+        m.set(d.date, d.ads);
+      }
+      return m;
+    }
     for (const c of accountCharges) {
       if (c.date < period.from || c.date > period.to) continue;
       if (c.kind !== 'promotion_pool' && c.kind !== 'refund') continue;
       m.set(c.date, (m.get(c.date) ?? 0) + c.amount);
     }
     return m;
-  }, [accountCharges, period.from, period.to, hasPerItemSpend]);
+  }, [accountCharges, period.from, period.to, hasPerItemSpend, spendings]);
   const series = useMemo(() => {
     const baseSeries = aggregateMetricsByDate(filteredMetrics);
-    // Добавляем к расходу за день распределённый CPx-пул того же дня (если есть)
     return baseSeries.map((d) => {
-      const cpxThisDay = cpxByDate.get(d.date) ?? 0;
+      const adsThisDay = adsByDate.get(d.date) ?? 0;
       return {
         ...d,
-        spend: Math.round(d.spend + cpxThisDay),
+        spend: Math.round(d.spend + adsThisDay),
       };
     });
-  }, [filteredMetrics, cpxByDate]);
+  }, [filteredMetrics, adsByDate]);
 
   const stats = calculateAccountStats(filteredItems, kpi);
 
