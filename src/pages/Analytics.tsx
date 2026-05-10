@@ -36,7 +36,7 @@ export default function Analytics() {
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const kpi = useStore((s) => s.kpi);
 
-  const [period, setPeriod] = useState(() => lastNDaysRange(270));
+  const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
@@ -128,8 +128,17 @@ export default function Analytics() {
           overspend:
             r.cpl != null && r.cpl > kpi.targetCpl ? r.cpl - kpi.targetCpl : 0,
         }))
-        .filter((r) => r.overspend > 0)
+        // Только те, где CPL ВЫШЕ цели (есть лиды, но дорого)
+        .filter((r) => r.cpl != null && r.cpl > kpi.targetCpl)
         .sort((a, b) => b.spend - a.spend),
+    [regData, kpi.targetCpl]
+  );
+  const effectiveCities = useMemo(
+    () =>
+      regData
+        // Только те, где CPL ≤ цели — выполняют KPI по цене лида
+        .filter((r) => r.cpl != null && r.cpl <= kpi.targetCpl && r.contacts > 0)
+        .sort((a, b) => (a.cpl ?? 0) - (b.cpl ?? 0)),
     [regData, kpi.targetCpl]
   );
 
@@ -247,7 +256,7 @@ export default function Analytics() {
           />
           <KpiBar label="Бюджет" value={stats.budgetUsage} note={`${formatRub(stats.totalSpend)} / ${formatRub(kpi.monthlyBudget)}`} />
         </Card>
-        <Card title="Неэффективные города">
+        <Card title="Неэффективные города (CPL выше цели)">
           {ineffectiveCities.length === 0 ? (
             <div className="text-sm text-ink-400">
               За выбранный период городов с CPL выше целевого нет — все в норме.
@@ -255,81 +264,23 @@ export default function Analytics() {
           ) : (
             <div className="space-y-2">
               {ineffectiveCities.map((c) => (
-                <div
-                  key={c.region}
-                  className="flex items-center justify-between border border-rose-500/30 bg-rose-500/5 rounded-lg px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-white truncate">
-                      {c.region}
-                    </div>
-                    <div className="text-xs text-ink-400">
-                      {formatNumber(c.contacts)} лидов · {formatRub(c.spend)}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs shrink-0 ml-3">
-                    <div className="font-semibold text-rose-300">
-                      {c.cpl != null ? formatRub(c.cpl) : '—'}
-                    </div>
-                    <div className="text-ink-400">
-                      +{formatRub(c.overspend)} от целевого
-                    </div>
-                  </div>
-                </div>
+                <CityRow key={c.region} city={c} tone="bad" />
               ))}
             </div>
           )}
         </Card>
-        <Card title="Эффективность по городам">
-          <div className="space-y-2">
-            {regData.slice(0, 8).map((r) => {
-              const isOverspend = r.cpl != null && r.cpl > kpi.targetCpl;
-              const isGood = r.cpl != null && r.cpl <= kpi.targetCpl && r.contacts > 0;
-              return (
-                <div
-                  key={r.region}
-                  className={[
-                    'flex items-center justify-between border rounded-lg px-3 py-2',
-                    isOverspend
-                      ? 'border-rose-500/30 bg-rose-500/5'
-                      : isGood
-                      ? 'border-emerald-500/30 bg-emerald-500/5'
-                      : 'border-ink-800',
-                  ].join(' ')}
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-white truncate">
-                      {r.region}
-                    </div>
-                    <div className="text-xs text-ink-400">
-                      {formatNumber(r.contacts)} лидов · {formatRub(r.spend)}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs shrink-0 ml-3">
-                    <div
-                      className={`font-semibold ${
-                        isOverspend
-                          ? 'text-rose-300'
-                          : isGood
-                          ? 'text-emerald-300'
-                          : 'text-white'
-                      }`}
-                    >
-                      {r.cpl != null ? formatRub(r.cpl) : '—'}
-                    </div>
-                    <div className="text-ink-400">
-                      {r.conversion != null ? formatPercent(r.conversion) : '—'}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {regData.filter((r) => r.cpl != null && r.cpl > kpi.targetCpl).length === 0 && (
-              <div className="text-xs text-ink-400 mt-2">
-                Перерасхода ни в одном городе не выявлено.
-              </div>
-            )}
-          </div>
+        <Card title="Эффективные города (CPL в пределах цели)">
+          {effectiveCities.length === 0 ? (
+            <div className="text-sm text-ink-400">
+              За период нет городов, выполняющих KPI по цене лида.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {effectiveCities.map((c) => (
+                <CityRow key={c.region} city={c} tone="good" />
+              ))}
+            </div>
+          )}
         </Card>
       </div>
 
@@ -393,6 +344,53 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
     <div className="card p-5">
       <h3 className="font-semibold text-white mb-3">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+function CityRow({
+  city,
+  tone,
+}: {
+  city: {
+    region: string;
+    cpl: number | null;
+    conversion: number | null;
+    ctr: number | null;
+    spend: number;
+    contacts: number;
+    views: number;
+    favorites: number;
+  };
+  tone: 'good' | 'bad';
+}) {
+  const colorWrap =
+    tone === 'good'
+      ? 'border-emerald-500/30 bg-emerald-500/5'
+      : 'border-rose-500/30 bg-rose-500/5';
+  const cplColor = tone === 'good' ? 'text-emerald-300' : 'text-rose-300';
+  return (
+    <div
+      className={`flex items-center justify-between border rounded-lg px-3 py-2 ${colorWrap}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-white truncate">{city.region}</div>
+        <div className="text-xs text-ink-400">
+          {formatNumber(city.contacts)} лидов · {formatNumber(city.views)} просм. ·{' '}
+          {formatRub(city.spend)}
+        </div>
+      </div>
+      <div className="text-right text-xs shrink-0 ml-3 space-y-0.5">
+        <div className={`font-semibold ${cplColor}`}>
+          CPL {city.cpl != null ? formatRub(city.cpl) : '—'}
+        </div>
+        <div className="text-ink-300">
+          CR {city.conversion != null ? formatPercent(city.conversion) : '—'}
+        </div>
+        <div className="text-ink-400">
+          CTR {city.ctr != null ? formatPercent(city.ctr) : '—'}
+        </div>
+      </div>
     </div>
   );
 }

@@ -21,16 +21,6 @@ export type AvitoItem = {
   price: number;
   currentBid: number;
   recommendedBid: number;
-  /** Минимальная доступная ставка из CPA-аукциона, ₽. */
-  minBid?: number;
-  /** Максимальная доступная ставка из CPA-аукциона, ₽. */
-  maxBid?: number;
-  /** Дискретный список ставок, которые Avito разрешает установить, ₽. */
-  availableBids?: number[];
-  /** Показатель "хорошести" текущей цены из Avito auction API. */
-  bidGoodness?: number;
-  /** Время окончания действия ставки, если ставка временная. */
-  bidExpiresAt?: string;
   views: number;
   contacts: number;
   favorites: number;

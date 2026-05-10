@@ -172,22 +172,39 @@ export function categoryAverages(items: AvitoItem[]) {
 }
 
 export function regionAverages(items: AvitoItem[]) {
-  const groups = new Map<string, { spend: number; contacts: number; views: number }>();
+  const groups = new Map<string, { spend: number; contacts: number; views: number; favorites: number }>();
   for (const it of items) {
-    const g = groups.get(it.region) ?? { spend: 0, contacts: 0, views: 0 };
+    const g = groups.get(it.region) ?? { spend: 0, contacts: 0, views: 0, favorites: 0 };
     g.spend += it.spend;
     g.contacts += it.contacts;
     g.views += it.views;
+    g.favorites += it.favorites;
     groups.set(it.region, g);
   }
-  const out: Array<{ region: string; cpl: number | null; conversion: number | null; spend: number; contacts: number }> = [];
+  const out: Array<{
+    region: string;
+    cpl: number | null;
+    /** Конверсия просмотр→контакт (CR), %. */
+    conversion: number | null;
+    /** CTR в наших данных = просмотр→интерес (избранное), %. */
+    ctr: number | null;
+    spend: number;
+    contacts: number;
+    views: number;
+    favorites: number;
+  }> = [];
   for (const [k, v] of groups.entries()) {
     out.push({
       region: k,
       cpl: calcCpl(v.spend, v.contacts),
       conversion: calcConversion(v.views, v.contacts),
+      // CTR = (favorites / views) * 100  — в Авито нет отдельного CTR показ→клик,
+      // зато есть прокси: «добавили в избранное / просмотрели». Это ближайший аналог.
+      ctr: v.views > 0 ? +((v.favorites / v.views) * 100).toFixed(2) : null,
       spend: v.spend,
       contacts: v.contacts,
+      views: v.views,
+      favorites: v.favorites,
     });
   }
   return out;

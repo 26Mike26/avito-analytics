@@ -24,7 +24,12 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
-import { AvitoAdapter, type AccountCharge, type AvitoBalance } from '../services/AvitoAdapter';
+import {
+  AvitoAdapter,
+  type AccountCharge,
+  type AvitoBalance,
+  type SpendingsBreakdown,
+} from '../services/AvitoAdapter';
 import { authService } from '../services/AuthService';
 import { repository } from '../services/Repository';
 import { SUPABASE_ENABLED } from '../services/supabase';
@@ -53,21 +58,6 @@ function genUuid(): string {
   buf[8] = (buf[8] & 0x3f) | 0x80;
   const hex = Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function normalizeBidForItem(item: AvitoItem, requestedBid: number): number {
-  const requested = Math.max(1, Math.round(requestedBid));
-  const available = (item.availableBids ?? [])
-    .filter((bid) => Number.isFinite(bid) && bid > 0)
-    .sort((a, b) => a - b);
-  if (available.length > 0) {
-    return available.reduce((best, bid) =>
-      Math.abs(bid - requested) < Math.abs(best - requested) ? bid : best
-    );
-  }
-  const min = item.minBid && item.minBid > 0 ? item.minBid : 1;
-  const max = item.maxBid && item.maxBid > 0 ? item.maxBid : Number.POSITIVE_INFINITY;
-  return Math.min(Math.max(requested, min), max);
 }
 
 function loadAccounts(): Record<string, AccountData> {
@@ -159,6 +149,8 @@ type Store = {
    * Тогда CPx-аванс уже учтён в metrics — не распределяем повторно по показам.
    */
   hasPerItemSpend: boolean;
+  /** Точные суммы расхода через /stats/v2/spendings (если ручка доступна). */
+  spendings: SpendingsBreakdown | null;
 
   // ───── Управление сессией
   bootstrap: () => Promise<void>;
@@ -304,6 +296,7 @@ export const useStore = create<Store>((set, get) => {
     balance: null,
     accountCharges: [],
     hasPerItemSpend: false,
+    spendings: null,
 
     bootstrap: async () => {
       // ─── Supabase режим ───
@@ -643,8 +636,7 @@ export const useStore = create<Store>((set, get) => {
       const oldItem = acc.items.find((i) => i.id === itemId);
       if (!oldItem) return;
       const oldBid = oldItem.currentBid;
-      const updatedBid = normalizeBidForItem(oldItem, newBid);
-      if (oldBid === updatedBid) return;
+      const updatedBid = Math.max(1, Math.round(newBid));
       const items = acc.items.map((i) =>
         i.id === itemId ? { ...i, currentBid: updatedBid } : i
       );
@@ -766,8 +758,7 @@ export const useStore = create<Store>((set, get) => {
         if (rec.diffPercent === 0) return item;
         if (rec.diffPercent > limitPercent) return item;
         if (rec.diffPercent > 0 && item.contacts === 0) return item;
-        const newBid = normalizeBidForItem(item, rec.recommended);
-        if (newBid === item.currentBid) return item;
+        const newBid = rec.recommended;
         newHistory.push({
           id: genUuid(),
           itemId: item.id,
@@ -810,9 +801,6 @@ export const useStore = create<Store>((set, get) => {
           console.warn('[supabase] applyAllBidRecommendations:', e);
         }
       })();
-      void adapter.updateBids(
-        newHistory.map((h) => ({ itemId: h.itemId, bid: h.newBid }))
-      );
       return applied;
     },
 
@@ -878,19 +866,17 @@ export const useStore = create<Store>((set, get) => {
       // и логировать изменения как события Авито (новые/снятые/изменённые).
       const prevItems = get().items;
       const items = await adapter.fetchItems();
-      // Подтянуть ставки CPx и наложить на items.currentBid
+      // Подтянуть ставки CPx и наложить на items.currentBid.
+      // Передаём список числовых ID для батчевого запроса getPromotionsByItemIds.
       try {
-        const bids = await adapter.fetchBids();
+        const numericIds = items
+          .map((i) => Number(i.id))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        const bids = await adapter.fetchBids(numericIds);
         if (bids.size > 0) {
           for (const it of items) {
-            const bid = bids.get(String(it.id));
-            if (!bid) continue;
-            if (bid.currentBid > 0) it.currentBid = bid.currentBid;
-            it.availableBids = bid.availableBids;
-            it.minBid = bid.minBid;
-            it.maxBid = bid.maxBid;
-            it.bidGoodness = bid.bidGoodness;
-            it.bidExpiresAt = bid.bidExpiresAt;
+            const b = bids.get(String(it.id));
+            if (b && b > 0) it.currentBid = b;
           }
         }
       } catch (e) {
@@ -930,6 +916,20 @@ export const useStore = create<Store>((set, get) => {
         set({ accountCharges: charges });
       } catch (e) {
         console.warn('[adapter] fetchAccountCharges failed:', e);
+      }
+      // Точные расходы профиля (Avito Pro Статистика → Расходы).
+      try {
+        const today = new Date();
+        const past = new Date(today);
+        past.setDate(today.getDate() - 30);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        const sp = await adapter.fetchSpendings({
+          dateFrom: fmt(past),
+          dateTo: fmt(today),
+        });
+        if (sp) set({ spendings: sp });
+      } catch (e) {
+        console.warn('[adapter] fetchSpendings failed:', e);
       }
       const accs = { ...get().accounts };
       const acc = accs[id];

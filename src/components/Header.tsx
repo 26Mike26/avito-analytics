@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { AccountSwitcher } from './AccountSwitcher';
+import { ThemeToggle } from './ThemeToggle';
 
 export function Header({
   title,
@@ -98,6 +99,9 @@ export function Header({
             </span>
           )}
         </Link>
+
+        {/* Тема light/dark */}
+        <ThemeToggle compact />
 
         {/* Переключатель аккаунтов — на мобиле компактнее (внутри AccountSwitcher) */}
         <AccountSwitcher />

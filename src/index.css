@@ -16,6 +16,97 @@ body {
   font-feature-settings: 'cv11', 'ss01';
 }
 
+/* ─── Светлая тема: тривиальная инверсия ink-токенов через CSS-переменные ─── */
+html.light body {
+  background: #f7f7f9;
+  color: #1a1a20;
+}
+html.light .silk-bg::before {
+  background:
+    radial-gradient(60% 40% at 110% -10%, rgba(255, 106, 0, 0.10) 0%, rgba(255, 106, 0, 0) 60%),
+    radial-gradient(50% 35% at -10% 110%, rgba(255, 106, 0, 0.06) 0%, rgba(255, 106, 0, 0) 60%);
+}
+html.light ::-webkit-scrollbar-thumb {
+  background: #d1d1d6;
+}
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #b0b0b8;
+}
+/* Recharts в светлой теме */
+html.light .recharts-default-tooltip,
+html.light .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: #ffffff !important;
+  border: 1px solid #e5e5ea !important;
+  color: #1a1a20 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+html.light .recharts-tooltip-label,
+html.light .recharts-tooltip-item-list .recharts-tooltip-item {
+  color: #1a1a20 !important;
+}
+html.light .recharts-cartesian-axis-tick-value tspan,
+html.light .recharts-text {
+  fill: #5a5a66 !important;
+}
+html.light .recharts-legend-item-text {
+  color: #1a1a20 !important;
+}
+/* Карточки и поверхности в светлой теме */
+html.light .card {
+  background: #ffffff !important;
+  border-color: #e5e5ea !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06) !important;
+}
+html.light .card::before { display: none; }
+html.light .input {
+  background: #ffffff !important;
+  border-color: #d1d1d6 !important;
+  color: #1a1a20 !important;
+}
+html.light select.input { color-scheme: light; }
+html.light .table-th {
+  background: #f4f4f7 !important;
+  border-bottom-color: #e5e5ea !important;
+  color: #5a5a66 !important;
+}
+html.light .table-td {
+  color: #1a1a20 !important;
+  border-bottom-color: #ebebef !important;
+}
+html.light .table-row:hover { background: #f7f7f9 !important; }
+html.light .btn-secondary {
+  background: #ffffff !important;
+  border-color: #d1d1d6 !important;
+  color: #1a1a20 !important;
+}
+html.light .btn-ghost { color: #5a5a66 !important; }
+html.light .btn-ghost:hover {
+  background: #f4f4f7 !important;
+  color: #1a1a20 !important;
+}
+html.light .pill-nav {
+  background: #ffffff !important;
+  border-color: #e5e5ea !important;
+}
+html.light .pill-nav-item.active {
+  background: #f4f4f7 !important;
+  color: #1a1a20 !important;
+}
+/* Перекрашиваем typography в светлой теме (классы text-white) */
+html.light .text-white { color: #1a1a20 !important; }
+html.light .text-ink-100 { color: #2a2a33 !important; }
+html.light .text-ink-200 { color: #3a3a45 !important; }
+html.light .text-ink-300 { color: #5a5a66 !important; }
+html.light .text-ink-400 { color: #7d7d8a !important; }
+html.light .text-ink-500 { color: #a8a8b3 !important; }
+html.light .bg-ink-900,
+html.light .bg-ink-950 { background-color: #f7f7f9 !important; }
+html.light .bg-ink-800,
+html.light .bg-ink-850 { background-color: #ffffff !important; }
+html.light .bg-ink-750 { background-color: #f4f4f7 !important; }
+html.light .border-ink-700,
+html.light .border-ink-800 { border-color: #e5e5ea !important; }
+
 /* Скрытые декоративные «шёлковые» линии для тёмного фона */
 .silk-bg {
   position: relative;

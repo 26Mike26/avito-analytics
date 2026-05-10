@@ -40,8 +40,9 @@ export default function Dashboard() {
   const balance = useStore((s) => s.balance);
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
+  const spendings = useStore((s) => s.spendings);
 
-  const [period, setPeriod] = useState(() => lastNDaysRange(270));
+  const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
   // Items с реальными суммами за выбранный период.
   // accountCharges передаём, чтобы CPx-аванс распределился по объявлениям
@@ -86,10 +87,27 @@ export default function Dashboard() {
     [chargesInPeriod]
   );
   const stats = calculateAccountStats(items, kpi);
-  // stats.totalSpend уже включает CPx-распределение (см. itemsInDateRange),
-  // поэтому второй раз prom-pool не плюсуем — это и есть «Расход на объявления».
-  const adsSpend = stats.totalSpend;
-  const totalSpendWithAccount = adsSpend + Math.max(0, accountOtherSpend);
+  // ЕСЛИ /stats/v2/spendings доступен — используем точные суммы Avito Pro:
+  //   adsSpend = promotion (расход на рекламу)
+  //   accountOther = presence + commission + rest (тариф, комиссии, прочее)
+  // ИНАЧЕ — fallback на наше распределение через operations_history.
+  const spendingsInPeriod = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    const promo = inRange.reduce((s, d) => s + d.promotion, 0);
+    const tot = inRange.reduce((s, d) => s + d.total, 0);
+    return { promotion: promo, other: tot - promo };
+  }, [spendings, period.from, period.to]);
+
+  const adsSpend = spendingsInPeriod
+    ? spendingsInPeriod.promotion
+    : stats.totalSpend;
+  const otherSpend = spendingsInPeriod
+    ? spendingsInPeriod.other
+    : Math.max(0, accountOtherSpend);
+  const totalSpendWithAccount = adsSpend + otherSpend;
 
   const sortedByEfficiency = [...items]
     .filter((i) => i.contacts > 0)
@@ -213,8 +231,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Разбивка расхода: на объявления (per-item + распределённый CPx-пул) и рассылки */}
-      {(promotionPoolSpend > 0 || accountOtherSpend > 0) && (
+      {/* Разбивка расхода: на рекламу (promotion) и прочее (тариф, комиссии, рассылки) */}
+      {(adsSpend > 0 || otherSpend > 0) && (
         <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
             <Coins className="w-4 h-4 text-amber-300" />
@@ -222,13 +240,13 @@ export default function Dashboard() {
               За период {period.from} — {period.to}:
             </span>
             <span className="text-white font-semibold">
-              на объявления {formatRub(adsSpend)}
+              на рекламу {formatRub(adsSpend)}
             </span>
-            {accountOtherSpend > 0 && (
+            {otherSpend > 0 && (
               <>
                 <span className="text-ink-500">+</span>
                 <span className="text-white font-semibold">
-                  рассылки и прочее {formatRub(accountOtherSpend)}
+                  тариф/комиссии/прочее {formatRub(otherSpend)}
                 </span>
               </>
             )}
@@ -237,17 +255,18 @@ export default function Dashboard() {
               {formatRub(totalSpendWithAccount)}
             </span>
           </div>
-          {promotionPoolSpend > 0 && (
-            <div className="mt-2 text-xs text-ink-400 leading-relaxed">
-              CPx-тариф (оплата за просмотры): {formatRub(promotionPoolSpend)} распределены
-              по объявлениям пропорционально количеству просмотров за период.
-              Точный per-item расход в Avito API отсутствует — можно сверить или импортировать
-              CSV из{' '}
-              <span className="text-white">
-                Авито Pro → Статистика → Детализация
-              </span>
-              .
+          {spendingsInPeriod ? (
+            <div className="mt-2 text-xs text-emerald-300/80 leading-relaxed">
+              ✓ Точные суммы из Avito Pro (через /stats/v2/spendings).
             </div>
+          ) : (
+            promotionPoolSpend > 0 && (
+              <div className="mt-2 text-xs text-ink-400 leading-relaxed">
+                CPx-тариф: суммы распределены по объявлениям пропорционально
+                просмотрам за период (приближение). Точная разбивка — в Авито Pro
+                → Статистика → Расходы.
+              </div>
+            )
           )}
         </div>
       )}

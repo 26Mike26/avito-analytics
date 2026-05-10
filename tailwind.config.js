@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // class-strategy: переключение темы через `<html class="light">`/`<html class="dark">`.
+  // По умолчанию dark — наш фирменный режим.
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {

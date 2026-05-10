@@ -268,14 +268,14 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
           dateTo,
           itemIds: itemIds ?? [],
           fields:
-            fields ?? ['uniqViews', 'uniqContacts', 'uniqFavorites'],
+            fields ?? ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
         }),
       }
     )
   );
 }));
 
-// In-memory кэш для /stats/v2 — 60 секунд per (accountId, dateFrom, dateTo, grouping, filter).
+// In-memory кэш для /stats/v2 — 60 секунд per (accountId, dateFrom, dateTo, itemIds).
 // Avito жёстко ограничивает rate (429), кэш экономит запросы.
 const v2Cache = new Map(); // key → { ts, data }
 const V2_TTL_MS = 60_000;
@@ -284,54 +284,26 @@ function v2CacheKey(accountId, body) {
     accountId,
     body.dateFrom,
     body.dateTo,
-    body.grouping ?? '',
-    (body.metrics ?? []).join(','),
-    JSON.stringify(body.filter ?? {}),
-    JSON.stringify(body.sort ?? {}),
-    body.limit ?? '',
-    body.offset ?? '',
+    (body.itemIds ?? []).join(','),
+    (body.fields ?? []).join(','),
+    body.periodGrouping ?? '',
   ].join('|');
 }
 
-// /stats/v2 — профильная аналитика: умеет отдавать расходы по объявлениям
-// (spending, presenceSpending, promoSpending, allSpending) в копейках.
+// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent).
 // Не у всех тарифов работает. Если Avito возвращает 400/404/429/500 —
 // проксируем как HTTP 200 с {_v2_unavailable: true}, чтобы Network не светилась.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
-  const {
-    dateFrom,
-    dateTo,
-    itemIds,
-    fields,
-    metrics,
-    grouping = 'item',
-    filter,
-    sort,
-    limit = 1000,
-    offset = 0,
-  } = req.body;
-  const itemFilter = Array.isArray(itemIds) && itemIds.length > 0
-    ? { itemIds: itemIds.map(Number).filter(Number.isFinite) }
-    : undefined;
-  const realMetrics = metrics ??
-    fields ?? [
-      'views',
-      'contacts',
-      'favorites',
-      'spending',
-      'presenceSpending',
-      'promoSpending',
-      'allSpending',
-    ];
+  const { dateFrom, dateTo, itemIds, fields } = req.body;
+  // ВАЖНО: Avito v2 enum поля = uniqViews, contacts, favorites, spent.
+  // Поля «cost» НЕТ. Используем только spent.
+  const realFields = fields ?? ['uniqViews', 'contacts', 'favorites', 'spent'];
   const body = {
     dateFrom,
     dateTo,
-    grouping,
-    metrics: realMetrics,
-    limit: Math.min(Number(limit) || 1000, 1000),
-    offset: Math.max(Number(offset) || 0, 0),
-    ...(filter || itemFilter ? { filter: { ...(filter ?? {}), ...(itemFilter ?? {}) } } : {}),
-    ...(sort ? { sort } : {}),
+    itemIds: itemIds ?? [],
+    fields: realFields,
+    periodGrouping: 'day',
   };
   // Проверяем кэш
   const key = v2CacheKey(accountId, body);
@@ -368,6 +340,56 @@ app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
   }
 }));
 
+// ─── Расходы профиля по типам (promotion / presence / commission / rest)
+// Точная цифра из Avito Pro Статистика → Расходы. Rate limit: 1/мин.
+// Кэшируем на 60 сек как и /stats/v2.
+const spendingsCache = new Map();
+const SPENDINGS_TTL_MS = 60_000;
+app.post('/api/stats/spendings', withAcc(async (accountId, req, res) => {
+  const { dateFrom, dateTo, grouping = 'day', spendingTypes, filter } = req.body;
+  const types = spendingTypes ?? ['promotion', 'presence', 'commission', 'rest'];
+  const key = [
+    accountId,
+    dateFrom,
+    dateTo,
+    grouping,
+    types.join(','),
+    JSON.stringify(filter ?? {}),
+  ].join('|');
+  const cached = spendingsCache.get(key);
+  if (cached && Date.now() - cached.ts < SPENDINGS_TTL_MS) {
+    res.json(cached.data);
+    return;
+  }
+  try {
+    const body = { dateFrom, dateTo, grouping, spendingTypes: types };
+    if (filter) body.filter = filter;
+    const result = await avitoFetch(
+      accountId,
+      `/stats/v2/accounts/${accountId}/spendings`,
+      { method: 'POST', body: JSON.stringify(body) }
+    );
+    spendingsCache.set(key, { ts: Date.now(), data: result });
+    if (spendingsCache.size > 100) {
+      const oldest = [...spendingsCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+      if (oldest) spendingsCache.delete(oldest[0]);
+    }
+    res.json(result);
+  } catch (e) {
+    if (e.status === 429) {
+      const stub = { _spendings_unavailable: true, error: 'rate_limit', status: 429 };
+      spendingsCache.set(key, { ts: Date.now() - (SPENDINGS_TTL_MS - 30_000), data: stub });
+      res.json(stub);
+      return;
+    }
+    if (e.status === 404 || e.status === 403) {
+      res.json({ _spendings_unavailable: true, error: 'не подключено', status: e.status });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
 app.get('/api/stats/calls', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo } = req.query;
   const qs = new URLSearchParams();
@@ -385,72 +407,98 @@ app.get('/api/stats/calls', withAcc(async (accountId, req, res) => {
 // Раздел: promotion, cpxpromo, autostrategy
 
 app.get('/api/promotion/services', withAcc(async (accountId, req, res) => {
-  const itemIds = req.query.itemIds;
-  const qs = new URLSearchParams();
-  if (itemIds) qs.set('itemIds', String(itemIds));
-  res.json(
-    await avitoFetch(
-      accountId,
-      `/core/v1/accounts/${accountId}/promotion/list/?${qs.toString()}`
-    )
-  );
-}));
-
-// CPA-цена целевого действия — установка / получение.
-// Если у аккаунта не подключён CPA — Avito ответит 404. Не светим красным.
-app.get('/api/auction/bids', withAcc(async (accountId, req, res) => {
   try {
-    const fromItemID = Math.max(Number(req.query.fromItemID ?? 0) || 0, 0);
-    const batchSize = Math.min(
-      Math.max(Number(req.query.batchSize ?? 200) || 200, 1),
-      200
+    const itemIds = req.query.itemIds;
+    const qs = new URLSearchParams();
+    if (itemIds) qs.set('itemIds', String(itemIds));
+    res.json(
+      await avitoFetch(
+        accountId,
+        `/core/v1/accounts/${accountId}/promotion/list/?${qs.toString()}`
+      )
     );
-    const qs = new URLSearchParams({
-      fromItemID: String(fromItemID),
-      batchSize: String(batchSize),
-    });
-    res.json(await avitoFetch(accountId, `/auction/1/bids?${qs.toString()}`));
   } catch (e) {
     if (e.status === 404 || e.status === 403) {
-      res.json({ items: [], _note: 'CPA-аукцион не подключён' });
+      res.json({ result: { items: [] }, _note: 'нет применённых услуг' });
       return;
     }
     res.status(e.status ?? 500).json({ error: e.message, body: e.body });
   }
 }));
 
-app.post('/api/auction/bids', withAcc(async (accountId, req, res) => {
-  const source = Array.isArray(req.body?.items) ? req.body.items : [];
-  const items = source.slice(0, 200).flatMap((row) => {
-    const itemID = Number(row.itemID ?? row.itemId);
-    const pricePenny = Number(row.pricePenny ?? row.bidPenny);
-    if (!Number.isFinite(itemID) || !Number.isFinite(pricePenny)) return [];
-    return [{
-      itemID,
-      pricePenny: Math.max(1, Math.round(pricePenny)),
-      ...(row.expirationTime === undefined
-        ? {}
-        : { expirationTime: row.expirationTime }),
-    }];
-  });
-  if (items.length === 0) {
-    res.status(400).json({ error: 'Нужен items[] с itemID и pricePenny' });
-    return;
-  }
-  res.json(
-    await avitoFetch(accountId, '/auction/1/bids', {
-      method: 'POST',
-      body: JSON.stringify({ items }),
-    })
-  );
-}));
-
+// CPA-цена целевого действия — установка / получение.
+// Если у аккаунта не подключён CPA — Avito ответит 404. Не светим красным.
 app.get('/api/cpx/bids', withAcc(async (accountId, _req, res) => {
   try {
     res.json(await avitoFetch(accountId, '/cpxpromo/1/bids/get'));
   } catch (e) {
     if (e.status === 404 || e.status === 403) {
       res.json({ result: { bids: [] }, _note: 'CPA не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
+// Батчевый запрос ставок per-item: до 200 объявлений за раз.
+// Возвращает manualPromotion.bidPenny (в копейках) и autoPromotion.budgetPenny.
+app.post('/api/cpx/promotions', withAcc(async (accountId, req, res) => {
+  try {
+    const { itemIds } = req.body;
+    res.json(
+      await avitoFetch(accountId, '/cpxpromo/1/getPromotionsByItemIds', {
+        method: 'POST',
+        body: JSON.stringify({ itemIDs: (itemIds ?? []).slice(0, 200) }),
+      })
+    );
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ items: [], _note: 'CPx не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
+// CPA-баланс v3 — точный остаток CPA-аванса.
+app.post('/api/cpa/balance', withAcc(async (accountId, _req, res) => {
+  try {
+    res.json(await avitoFetch(accountId, '/cpa/v3/balanceInfo', { method: 'POST', body: '{}' }));
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ balance: 0, _note: 'CPA не подключён' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
+// Список автостратегических кампаний (для последующего getStat по campaignId).
+app.post('/api/autostrategy/campaigns', withAcc(async (accountId, _req, res) => {
+  try {
+    res.json(await avitoFetch(accountId, '/autostrategy/v1/campaigns', { method: 'POST', body: '{}' }));
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ campaigns: [], _note: 'автостратегия не подключена' });
+      return;
+    }
+    res.status(e.status ?? 500).json({ error: e.message, body: e.body });
+  }
+}));
+
+// Статистика по конкретной кампании автостратегии (расходы per-item возможны).
+app.post('/api/autostrategy/stat', withAcc(async (accountId, req, res) => {
+  try {
+    const { campaignId } = req.body;
+    res.json(
+      await avitoFetch(accountId, '/autostrategy/v1/stat', {
+        method: 'POST',
+        body: JSON.stringify({ campaignId }),
+      })
+    );
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) {
+      res.json({ items: [], _note: 'нет данных' });
       return;
     }
     res.status(e.status ?? 500).json({ error: e.message, body: e.body });
@@ -521,11 +569,9 @@ app.listen(PORT, () => {
   console.log('  GET  /api/items?status=active&per_page=25');
   console.log('  GET  /api/items/:id');
   console.log('  POST /api/stats/items   { dateFrom, dateTo, itemIds, fields }');
-  console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, metrics, grouping } — опц., per-item spend');
+  console.log('  POST /api/stats/items/v2 { dateFrom, dateTo, itemIds, fields } — опц., per-item spend');
   console.log('  GET  /api/stats/calls?dateFrom=...&dateTo=...');
   console.log('  GET  /api/promotion/services?itemIds=...');
-  console.log('  GET  /api/auction/bids?fromItemID=0&batchSize=200');
-  console.log('  POST /api/auction/bids        { items: [{ itemID, pricePenny }] }');
   console.log('  GET  /api/cpx/bids');
   console.log('  POST /api/cpx/bids/manual');
   console.log('  GET  /api/messenger/chats?unread_only=true');
