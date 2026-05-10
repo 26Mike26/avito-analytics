@@ -50,10 +50,14 @@ export type AccountCharge = {
  * Точные суммы расхода профиля по типам.
  * Источник: /stats/v2/accounts/{id}/spendings (Avito Pro Статистика → Расходы).
  *
- *  - promotion  — расход на продвижение (CPx, CPC, услуги VAS) — это «расход на рекламу»
- *  - presence   — расход на присутствие в каталоге (тариф)
+ *  - promotion  — VAS-услуги (XL, Premium, поднятие)
+ *  - presence   — тариф «Присутствие» = CPx-расход за просмотры (для CPx-аккаунтов
+ *                 это и есть основной рекламный расход)
  *  - commission — комиссии Авито
  *  - rest       — прочие расходы
+ *
+ * Для UI «расход на рекламу» = promotion + presence (всё что идёт на показы).
+ * «Прочее» = commission + rest.
  */
 export type SpendingsBreakdown = {
   promotion: number;
@@ -62,7 +66,14 @@ export type SpendingsBreakdown = {
   rest: number;
   total: number;
   /** Разбивка по дням, для графиков. */
-  byDate: Array<{ date: string; promotion: number; total: number }>;
+  byDate: Array<{
+    date: string;
+    promotion: number;
+    presence: number;
+    /** ads = promotion + presence (то, что считается рекламным расходом). */
+    ads: number;
+    total: number;
+  }>;
 };
 
 /** Баланс аккаунта в Авито. */
@@ -742,12 +753,16 @@ export class AvitoAdapter implements IAvitoAdapter {
             totals[s.slug as keyof typeof totals] += Number(s.value ?? 0);
           }
         }
+        const promo = Number(map.promotion ?? 0);
+        const pres = Number(map.presence ?? 0);
         byDate.push({
           date: g.date,
-          promotion: Number(map.promotion ?? 0),
+          promotion: promo,
+          presence: pres,
+          ads: promo + pres,
           total:
-            Number(map.promotion ?? 0) +
-            Number(map.presence ?? 0) +
+            promo +
+            pres +
             Number(map.commission ?? 0) +
             Number(map.rest ?? 0),
         });
@@ -755,7 +770,7 @@ export class AvitoAdapter implements IAvitoAdapter {
       const total =
         totals.promotion + totals.presence + totals.commission + totals.rest;
       console.info(
-        `[AvitoAdapter] /stats/v2/spendings: promotion=${totals.promotion}, total=${total}`
+        `[AvitoAdapter] /stats/v2/spendings: promotion=${totals.promotion}, presence=${totals.presence}, ads=${totals.promotion + totals.presence}, total=${total}`
       );
       return { ...totals, total, byDate };
     } catch (e) {
@@ -966,12 +981,18 @@ export class AvitoAdapter implements IAvitoAdapter {
         real = Number(root.real ?? root.realBalance ?? 0);
         bonus = Number(root.bonus ?? root.bonusBalance ?? 0);
       }
-      // Сначала пробуем cpa/v3/balanceInfo (самый точный)
+      // Сначала пробуем cpa/v3/balanceInfo (самый точный).
+      // Avito API в v3 отдаёт суммы в КОПЕЙКАХ — делим на 100.
       if (cpaV3.status === 'fulfilled') {
         const root = cpaV3.value as Record<string, unknown>;
-        advance = Number(
+        const rawCpa = Number(
           root.balance ?? root.realBalance ?? root.amount ?? 0
         );
+        // Эвристика: если значение >= 100 000 — почти наверняка копейки
+        // (1 000 000 рублей — нетипичный остаток, а 1 000 000 копеек = 10 000 ₽).
+        // Если значение дробное (например 195.8) — это уже рубли.
+        const isProbablyKopecks = Number.isInteger(rawCpa) && rawCpa >= 100_000;
+        advance = isProbablyKopecks ? Math.round(rawCpa / 100) : rawCpa;
       }
       // Fallback на cpxpromo/balanceInfo
       if (advance === 0 && cpa.status === 'fulfilled') {

@@ -96,13 +96,16 @@ export default function Dashboard() {
     const inRange = spendings.byDate.filter(
       (d) => d.date >= period.from && d.date <= period.to
     );
+    // Расход на рекламу = promotion + presence (CPx-расход у Avito идёт в presence)
     const promo = inRange.reduce((s, d) => s + d.promotion, 0);
+    const pres = inRange.reduce((s, d) => s + d.presence, 0);
     const tot = inRange.reduce((s, d) => s + d.total, 0);
-    return { promotion: promo, other: tot - promo };
+    const ads = promo + pres;
+    return { ads, promotion: promo, presence: pres, other: tot - ads, total: tot };
   }, [spendings, period.from, period.to]);
 
   const adsSpend = spendingsInPeriod
-    ? spendingsInPeriod.promotion
+    ? spendingsInPeriod.ads
     : stats.totalSpend;
   const otherSpend = spendingsInPeriod
     ? spendingsInPeriod.other
@@ -187,8 +190,12 @@ export default function Dashboard() {
               чем потратили — баланс CPA вырос (положительное число).
               Если потратили больше — пользовались остатком прошлого периода. */}
           {(() => {
-            // расход CPx = всё что мы посчитали как «расход на объявления» в отчёте
-            const advanceDelta = cpxTopups - adsSpend;
+            // Аванс = пополнения CPA минус расход на рекламу за тот же период.
+            // Если есть точные spendings — используем их (presence = CPx-расход).
+            // Иначе fallback на cpxTopups из operations_history.
+            const realSpend = adsSpend;
+            const realTopups = cpxTopups;
+            const advanceDelta = realTopups - realSpend;
             const sign = advanceDelta > 0 ? '+' : '';
             const isPositive = advanceDelta > 0;
             const isNegative = advanceDelta < 0;
@@ -197,15 +204,15 @@ export default function Dashboard() {
                 label="Изменение аванса за период"
                 icon={<PiggyBank className="w-4 h-4" />}
                 value={
-                  cpxTopups === 0 && adsSpend === 0
+                  realTopups === 0 && realSpend === 0
                     ? '—'
                     : `${sign}${formatRub(advanceDelta)}`
                 }
                 hint={
-                  cpxTopups === 0 && adsSpend === 0
+                  realTopups === 0 && realSpend === 0
                     ? 'За период не было ни пополнений, ни расхода'
-                    : `Пополнено ${formatRub(cpxTopups)} − израсходовано ${formatRub(
-                        adsSpend
+                    : `Пополнено ${formatRub(realTopups)} − израсходовано ${formatRub(
+                        realSpend
                       )} = ${
                         isPositive
                           ? 'аванс вырос'
@@ -231,7 +238,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Разбивка расхода: на рекламу (promotion) и прочее (тариф, комиссии, рассылки) */}
+      {/* Разбивка расхода: на рекламу (promotion+presence) и прочее (commission+rest) */}
       {(adsSpend > 0 || otherSpend > 0) && (
         <div className="card border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
@@ -246,7 +253,7 @@ export default function Dashboard() {
               <>
                 <span className="text-ink-500">+</span>
                 <span className="text-white font-semibold">
-                  тариф/комиссии/прочее {formatRub(otherSpend)}
+                  комиссии/прочее {formatRub(otherSpend)}
                 </span>
               </>
             )}
@@ -257,7 +264,10 @@ export default function Dashboard() {
           </div>
           {spendingsInPeriod ? (
             <div className="mt-2 text-xs text-emerald-300/80 leading-relaxed">
-              ✓ Точные суммы из Avito Pro (через /stats/v2/spendings).
+              ✓ Точные суммы из Avito Pro: продвижение{' '}
+              {formatRub(spendingsInPeriod.promotion)} + тариф{' '}
+              {formatRub(spendingsInPeriod.presence)} + комиссии и прочее{' '}
+              {formatRub(spendingsInPeriod.other)}.
             </div>
           ) : (
             promotionPoolSpend > 0 && (
@@ -277,8 +287,8 @@ export default function Dashboard() {
           value={formatRub(adsSpend)}
           icon={Coins}
           hint={
-            promotionPoolSpend > 0
-              ? `Per-item ${formatRub(stats.totalSpend)} + CPx-аванс ${formatRub(promotionPoolSpend)}`
+            spendingsInPeriod
+              ? `Продвижение ${formatRub(spendingsInPeriod.promotion)} + тариф ${formatRub(spendingsInPeriod.presence)}`
               : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
           }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
