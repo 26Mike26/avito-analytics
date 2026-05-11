@@ -44,44 +44,10 @@ export default function Dashboard() {
 
   const [period, setPeriod] = useState(() => lastNDaysRange(30));
 
-  // Точная сумма расхода на рекламу за период из /stats/v2/spendings.
-  // Считаем ДО useMemo для items, чтобы передать ads в распределение.
-  const adsTotalFromSpendings = useMemo(() => {
-    if (!spendings) return null;
-    const inRange = spendings.byDate.filter(
-      (d) => d.date >= period.from && d.date <= period.to
-    );
-    return inRange.reduce((s, d) => s + d.ads, 0);
-  }, [spendings, period.from, period.to]);
-
-  // Items с реальными суммами за выбранный период.
-  // Если /stats/v2/spendings доступен — распределяем точное ads (promotion+presence)
-  // пропорционально показам. Иначе fallback на CPx-аванс из operations_history.
-  const items = useMemo(
-    () =>
-      itemsInDateRange(
-        allItems,
-        metrics,
-        period.from,
-        period.to,
-        accountCharges,
-        hasPerItemSpend,
-        adsTotalFromSpendings
-      ),
-    [
-      allItems,
-      metrics,
-      period.from,
-      period.to,
-      accountCharges,
-      hasPerItemSpend,
-      adsTotalFromSpendings,
-    ]
-  );
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
-  //  - account_other: рассылки и прочие услуги, не реклама
-  //  - refund: сторно (вычитается из обоих)
+  //  - account_other: подписки/инструменты/прочие услуги
+  //  - refund: сторно (вычитается из рекламного пула)
   const chargesInPeriod = useMemo(
     () => accountCharges.filter((c) => c.date >= period.from && c.date <= period.to),
     [accountCharges, period.from, period.to]
@@ -104,8 +70,8 @@ export default function Dashboard() {
         .reduce((s, c) => s + c.amount, 0),
     [chargesInPeriod]
   );
-  const stats = calculateAccountStats(items, kpi);
-  // Разбивка из /stats/v2/spendings (если доступно) — для отображения деталей.
+  // Разбивка из /stats/v2/spendings (если доступно) — для отображения деталей
+  // и включения commission/rest в полный CPL.
   const spendingsInPeriod = useMemo(() => {
     if (!spendings) return null;
     const inRange = spendings.byDate.filter(
@@ -118,13 +84,48 @@ export default function Dashboard() {
     return { ads, promotion: promo, presence: pres, other: tot - ads, total: tot };
   }, [spendings, period.from, period.to]);
 
-  // adsSpend = точно равен stats.totalSpend, т.к. items распределены через ads-pool.
-  // Гарантируем равенство — берём stats.totalSpend (который уже посчитан от распределённых items).
-  const adsSpend = stats.totalSpend;
+  // Точная сумма расхода на рекламу за период из /stats/v2/spendings.
+  // Считаем ДО useMemo для items, чтобы передать ads в распределение.
+  const adsTotalFromSpendings = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    return inRange.reduce((s, d) => s + d.ads, 0);
+  }, [spendings, period.from, period.to]);
   const otherSpend = spendingsInPeriod
     ? spendingsInPeriod.other
     : Math.max(0, accountOtherSpend);
-  const totalSpendWithAccount = adsSpend + otherSpend;
+
+  // Items с реальными суммами за выбранный период.
+  // Если /stats/v2/spendings доступен — распределяем точное ads (promotion+presence)
+  // и commission/rest пропорционально показам. Иначе fallback на operations_history.
+  const items = useMemo(
+    () =>
+      itemsInDateRange(
+        allItems,
+        metrics,
+        period.from,
+        period.to,
+        accountCharges,
+        hasPerItemSpend,
+        adsTotalFromSpendings,
+        otherSpend
+      ),
+    [
+      allItems,
+      metrics,
+      period.from,
+      period.to,
+      accountCharges,
+      hasPerItemSpend,
+      adsTotalFromSpendings,
+      otherSpend,
+    ]
+  );
+  const stats = calculateAccountStats(items, kpi);
+  const totalSpendWithAccount = stats.totalSpend;
+  const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
 
   const sortedByEfficiency = [...items]
     .filter((i) => i.contacts > 0)
@@ -298,12 +299,12 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="Расход на объявления"
-          value={formatRub(adsSpend)}
+          value={formatRub(totalSpendWithAccount)}
           icon={Coins}
           hint={
             spendingsInPeriod
-              ? `Продвижение ${formatRub(spendingsInPeriod.promotion)} + тариф ${formatRub(spendingsInPeriod.presence)}`
-              : `${formatPercent(stats.budgetUsage, 0)} от месячного бюджета`
+              ? `Реклама ${formatRub(adsSpend)} + комиссии/прочее ${formatRub(otherSpend)}`
+              : `С учётом подписок/инструментов · ${formatPercent(stats.budgetUsage, 0)} от бюджета`
           }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />

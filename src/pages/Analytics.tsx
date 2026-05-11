@@ -61,9 +61,22 @@ export default function Analytics() {
     );
     return inRange.reduce((s, d) => s + d.ads, 0);
   }, [spendings, period.from, period.to]);
+  const otherTotalInPeriod = useMemo(() => {
+    if (spendings) {
+      const inRange = spendings.byDate.filter(
+        (d) => d.date >= period.from && d.date <= period.to
+      );
+      return inRange.reduce((s, d) => s + Math.max(0, d.total - d.ads), 0);
+    }
+    return accountCharges
+      .filter((c) => c.date >= period.from && c.date <= period.to)
+      .filter((c) => c.kind === 'account_other')
+      .reduce((s, c) => s + c.amount, 0);
+  }, [spendings, accountCharges, period.from, period.to]);
 
   // Items с пересчётом расхода за период.
   // Приоритет: точное ads из spendings → распределение CPx → 0.
+  // Комиссии/прочее тоже распределяем по объявлениям, чтобы CPL был полным.
   const itemsForPeriod = useMemo(
     () =>
       itemsInDateRange(
@@ -73,7 +86,8 @@ export default function Analytics() {
         period.to,
         accountCharges,
         hasPerItemSpend,
-        adsTotalFromSpendings
+        adsTotalFromSpendings,
+        otherTotalInPeriod
       ),
     [
       allItems,
@@ -83,6 +97,7 @@ export default function Analytics() {
       accountCharges,
       hasPerItemSpend,
       adsTotalFromSpendings,
+      otherTotalInPeriod,
     ]
   );
 
@@ -167,13 +182,65 @@ export default function Analytics() {
     filteredMetrics,
     allMetricsInPeriod,
   ]);
+  const otherByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    const filteredViewsByDate = new Map<string, number>();
+    const allViewsByDate = new Map<string, number>();
+    for (const x of filteredMetrics) {
+      filteredViewsByDate.set(x.date, (filteredViewsByDate.get(x.date) ?? 0) + x.views);
+    }
+    for (const x of allMetricsInPeriod) {
+      allViewsByDate.set(x.date, (allViewsByDate.get(x.date) ?? 0) + x.views);
+    }
+    if (spendings) {
+      for (const d of spendings.byDate) {
+        if (d.date < period.from || d.date > period.to) continue;
+        const other = Math.max(0, d.total - d.ads);
+        const allViews = allViewsByDate.get(d.date) ?? 0;
+        const filteredViews = filteredViewsByDate.get(d.date) ?? 0;
+        m.set(d.date, allViews > 0 ? (filteredViews / allViews) * other : 0);
+      }
+      return m;
+    }
+    for (const c of accountCharges) {
+      if (c.date < period.from || c.date > period.to) continue;
+      if (c.kind !== 'account_other') continue;
+      const allViews = allViewsByDate.get(c.date) ?? 0;
+      const filteredViews = filteredViewsByDate.get(c.date) ?? 0;
+      const share = allViews > 0 ? filteredViews / allViews : 1;
+      m.set(c.date, (m.get(c.date) ?? 0) + c.amount * share);
+    }
+    return m;
+  }, [
+    accountCharges,
+    period.from,
+    period.to,
+    spendings,
+    filteredMetrics,
+    allMetricsInPeriod,
+  ]);
   const series = useMemo(() => {
     const baseSeries = aggregateMetricsByDate(filteredMetrics);
-    return baseSeries.map((d) => {
+    const byDate = new Map(baseSeries.map((d) => [d.date, d]));
+    for (const date of new Set([...adsByDate.keys(), ...otherByDate.keys()])) {
+      if (!byDate.has(date)) {
+        byDate.set(date, {
+          date,
+          views: 0,
+          contacts: 0,
+          spend: 0,
+          favorites: 0,
+          cpl: 0,
+          conversion: 0,
+        });
+      }
+    }
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)).map((d) => {
       const adsThisDay = adsByDate.get(d.date) ?? 0;
+      const otherThisDay = otherByDate.get(d.date) ?? 0;
       // Если у нас точный spendings — отбрасываем VAS из metrics (двойной учёт).
       // Иначе (fallback) — суммируем VAS из metrics + распределённый CPx.
-      const totalSpend = spendings ? adsThisDay : d.spend + adsThisDay;
+      const totalSpend = (spendings ? adsThisDay : d.spend + adsThisDay) + otherThisDay;
       const cpl = d.contacts > 0 ? Math.round(totalSpend / d.contacts) : 0;
       return {
         ...d,
@@ -181,7 +248,7 @@ export default function Analytics() {
         cpl,
       };
     });
-  }, [filteredMetrics, adsByDate, spendings]);
+  }, [filteredMetrics, adsByDate, otherByDate, spendings]);
 
   const stats = calculateAccountStats(filteredItems, kpi);
 

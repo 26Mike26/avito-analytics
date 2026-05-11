@@ -266,7 +266,13 @@ export function itemsInDateRange(
    * Если задано — распределяем именно её пропорционально показам, а не CPx-аванс из operations.
    * Это даёт точные per-item расходы согласованные с дашбордом.
    */
-  adsTotalInPeriod?: number | null
+  adsTotalInPeriod?: number | null,
+  /**
+   * Комиссии/прочие расходы аккаунта за период (например подписка на инструменты).
+   * Для сводных KPI распределяем их по объявлениям пропорционально просмотрам,
+   * чтобы общий CPL считался от полного расхода аккаунта.
+   */
+  accountOtherTotalInPeriod?: number | null
 ): AvitoItem[] {
   // Сначала нормализуем регион (на случай старых данных в localStorage).
   const normalizedItems = items.map((it) => ({ ...it, region: cleanCity(it.region) }));
@@ -326,6 +332,13 @@ export function itemsInDateRange(
   // Если же используется fallback на CPx-аванс из operations — там только
   // promotion-pool, и VAS из per-item operations отдельно — можно складывать.
   const useSpendingsSource = adsTotalInPeriod != null && adsTotalInPeriod > 0;
+  const accountOtherPoolInPeriod =
+    accountOtherTotalInPeriod != null
+      ? accountOtherTotalInPeriod
+      : (accountCharges ?? [])
+          .filter((c) => c.date >= from && c.date <= to)
+          .filter((c) => c.kind === 'account_other')
+          .reduce((s, c) => s + (c.amount || 0), 0);
 
   return normalizedItems.map((it) => {
     const sum = sumByItem.get(it.id);
@@ -337,7 +350,13 @@ export function itemsInDateRange(
       totalViewsInPeriod > 0 && cpxPoolInPeriod > 0
         ? (sum.views / totalViewsInPeriod) * cpxPoolInPeriod
         : 0;
-    const itemSpend = useSpendingsSource ? cpxShare : sum.spend + cpxShare;
+    const accountOtherShare =
+      totalViewsInPeriod > 0 && accountOtherPoolInPeriod > 0
+        ? (sum.views / totalViewsInPeriod) * accountOtherPoolInPeriod
+        : 0;
+    const itemSpend =
+      (useSpendingsSource ? cpxShare : sum.spend + cpxShare) +
+      accountOtherShare;
     return {
       ...it,
       views: sum.views,
