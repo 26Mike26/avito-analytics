@@ -15,10 +15,10 @@ import { useStore } from '../store/useStore';
 import {
   comparePeriods,
   defaultRanges,
-  filterMetricsByDate,
+  type CityDiff,
   type PeriodComparison,
 } from '../lib/compare';
-import { formatRub } from '../lib/analytics';
+import { formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
 import type { AvitoItem, ItemMetrics } from '../types';
 
@@ -27,6 +27,9 @@ type Mode = 'date' | 'csv';
 export default function Compare() {
   const items = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
+  const accountCharges = useStore((s) => s.accountCharges);
+  const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
+  const spendings = useStore((s) => s.spendings);
 
   const [mode, setMode] = useState<Mode>('date');
 
@@ -58,28 +61,79 @@ export default function Compare() {
     setter({ items: res.items, metrics: res.metrics, fileName: file.name });
   };
 
+  const getPeriodSpendTotals = useMemo(
+    () =>
+      (range: { from: string; to: string }) => {
+        if (spendings) {
+          const inRange = spendings.byDate.filter(
+            (d) => d.date >= range.from && d.date <= range.to
+          );
+          const ads = inRange.reduce((s, d) => s + d.ads, 0);
+          const total = inRange.reduce((s, d) => s + d.total, 0);
+          return { ads, other: Math.max(0, total - ads) };
+        }
+
+        const other = accountCharges
+          .filter((c) => c.date >= range.from && c.date <= range.to)
+          .filter((c) => c.kind === 'account_other')
+          .reduce((s, c) => s + c.amount, 0);
+        return { ads: null, other: Math.max(0, other) };
+      },
+    [accountCharges, spendings]
+  );
+
   const comparison = useMemo<PeriodComparison | null>(() => {
     if (mode === 'date') {
-      const a = filterMetricsByDate(metrics, dateA.from, dateA.to);
-      const b = filterMetricsByDate(metrics, dateB.from, dateB.to);
-      if (a.length === 0 && b.length === 0) return null;
+      const totalsA = getPeriodSpendTotals(dateA);
+      const totalsB = getPeriodSpendTotals(dateB);
+      const periodItemsA = itemsInDateRange(
+        items,
+        metrics,
+        dateA.from,
+        dateA.to,
+        accountCharges,
+        hasPerItemSpend,
+        totalsA.ads,
+        totalsA.other
+      );
+      const periodItemsB = itemsInDateRange(
+        items,
+        metrics,
+        dateB.from,
+        dateB.to,
+        accountCharges,
+        hasPerItemSpend,
+        totalsB.ads,
+        totalsB.other
+      );
+      const hasData = [...periodItemsA, ...periodItemsB].some(hasComparisonActivity);
+      if (!hasData) return null;
       return comparePeriods(
-        a,
-        b,
-        items,
-        items,
+        [],
+        [],
+        periodItemsA,
+        periodItemsB,
         `${dateA.from} → ${dateA.to}`,
         `${dateB.from} → ${dateB.to}`
       );
     }
     if (mode === 'csv') {
       if (!csvA || !csvB) return null;
-      const a = csvA.metrics.length > 0 ? csvA.metrics : itemsToFakeMetrics(csvA.items);
-      const b = csvB.metrics.length > 0 ? csvB.metrics : itemsToFakeMetrics(csvB.items);
-      return comparePeriods(a, b, csvA.items, csvB.items, csvA.fileName, csvB.fileName);
+      return comparePeriods([], [], csvA.items, csvB.items, csvA.fileName, csvB.fileName);
     }
     return null;
-  }, [mode, dateA, dateB, csvA, csvB, items, metrics]);
+  }, [
+    mode,
+    dateA,
+    dateB,
+    csvA,
+    csvB,
+    items,
+    metrics,
+    accountCharges,
+    hasPerItemSpend,
+    getPeriodSpendTotals,
+  ]);
 
   return (
     <Layout
@@ -177,19 +231,8 @@ export default function Compare() {
   );
 }
 
-function itemsToFakeMetrics(items: AvitoItem[]): ItemMetrics[] {
-  // Если в CSV не было дневной разбивки — превратим суммарный отчёт в одну
-  // запись на объявление. Это позволяет всё равно сравнить два периода.
-  const today = new Date().toISOString().slice(0, 10);
-  return items.map((i) => ({
-    itemId: i.id,
-    date: today,
-    views: i.views,
-    contacts: i.contacts,
-    favorites: i.favorites,
-    spend: i.spend,
-    bid: i.currentBid,
-  }));
+function hasComparisonActivity(item: AvitoItem): boolean {
+  return item.views > 0 || item.contacts > 0 || item.favorites > 0 || item.spend > 0;
 }
 
 function DateRangeInput({
@@ -347,6 +390,8 @@ function ComparisonView({ c }: { c: PeriodComparison }) {
         </div>
       </div>
 
+      <CityComparison cities={c.cities} />
+
       {/* Топ-движение по объявлениям */}
       <div className="card p-4 sm:p-5">
         <h2 className="text-lg font-bold text-white mb-3">
@@ -404,6 +449,78 @@ function ComparisonView({ c }: { c: PeriodComparison }) {
         )}
       </div>
     </>
+  );
+}
+
+function CityComparison({ cities }: { cities: CityDiff[] }) {
+  return (
+    <div className="card p-4 sm:p-5 mb-6">
+      <h2 className="text-lg font-bold text-white mb-3">
+        Сравнение по городам
+      </h2>
+      {cities.length === 0 ? (
+        <div className="text-sm text-ink-400">
+          За выбранные периоды нет городов с активностью.
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="table-th">Город</th>
+                  <th className="table-th text-right">Просмотры A → Б</th>
+                  <th className="table-th text-right">Контакты A → Б</th>
+                  <th className="table-th text-right">Расход A → Б</th>
+                  <th className="table-th text-right">CPL A → Б</th>
+                  <th className="table-th text-right">Δ контактов</th>
+                  <th className="table-th text-right">Δ CPL %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cities.slice(0, 50).map((d) => (
+                  <tr key={d.region} className="table-row">
+                    <td className="table-td text-white">{d.region}</td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {formatNumber(d.a.views)} → {formatNumber(d.b.views)}
+                    </td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {formatNumber(d.a.contacts)} → {formatNumber(d.b.contacts)}
+                    </td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {formatRub(d.a.spend)} → {formatRub(d.b.spend)}
+                    </td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {d.a.cpl != null ? formatRub(d.a.cpl) : '—'} →{' '}
+                      {d.b.cpl != null ? formatRub(d.b.cpl) : '—'}
+                    </td>
+                    <td className="table-td text-right">
+                      <DeltaPill value={d.deltaContacts} higherIsBetter />
+                    </td>
+                    <td className="table-td text-right">
+                      {d.cplChangePercent != null ? (
+                        <DeltaPill
+                          value={d.cplChangePercent}
+                          higherIsBetter={false}
+                          suffix="%"
+                        />
+                      ) : (
+                        <span className="text-ink-500">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {cities.length > 50 && (
+            <div className="text-xs text-ink-400 mt-2">
+              Показаны 50 городов с самыми большими изменениями.
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

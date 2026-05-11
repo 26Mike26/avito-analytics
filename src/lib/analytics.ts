@@ -331,7 +331,8 @@ export function itemsInDateRange(
   // sum.spend (VAS из operations) — это даст двойной учёт.
   // Если же используется fallback на CPx-аванс из operations — там только
   // promotion-pool, и VAS из per-item operations отдельно — можно складывать.
-  const useSpendingsSource = adsTotalInPeriod != null && adsTotalInPeriod > 0;
+  const useSpendingsSource =
+    !hasPerItemSpend && adsTotalInPeriod != null && adsTotalInPeriod > 0;
   const accountOtherPoolInPeriod =
     accountOtherTotalInPeriod != null
       ? accountOtherTotalInPeriod
@@ -355,8 +356,7 @@ export function itemsInDateRange(
         ? (sum.views / totalViewsInPeriod) * accountOtherPoolInPeriod
         : 0;
     const itemSpend =
-      (useSpendingsSource ? cpxShare : sum.spend + cpxShare) +
-      accountOtherShare;
+      (useSpendingsSource ? cpxShare : sum.spend + cpxShare) + accountOtherShare;
     return {
       ...it,
       views: sum.views,

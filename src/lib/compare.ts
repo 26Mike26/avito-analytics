@@ -38,6 +38,16 @@ export type ItemDiff = {
   contactsChangePercent: number | null;
 };
 
+export type CityDiff = {
+  region: string;
+  a: { views: number; contacts: number; spend: number; cpl: number | null };
+  b: { views: number; contacts: number; spend: number; cpl: number | null };
+  deltaContacts: number;
+  deltaSpend: number;
+  cplChangePercent: number | null;
+  contactsChangePercent: number | null;
+};
+
 export type PeriodComparison = {
   a: PeriodAggregate;
   b: PeriodAggregate;
@@ -48,16 +58,26 @@ export type PeriodComparison = {
     cpl: { abs: number | null; percent: number | null };
     conversion: { abs: number | null; percent: number | null };
   };
+  cities: CityDiff[];
   items: ItemDiff[];
 };
 
-function aggregate(metrics: ItemMetrics[], items: AvitoItem[], label: string): PeriodAggregate {
-  const views = metrics.reduce((s, m) => s + m.views, 0);
-  const contacts = metrics.reduce((s, m) => s + m.contacts, 0);
-  const spend = metrics.reduce((s, m) => s + m.spend, 0);
-  const favorites = metrics.reduce((s, m) => s + m.favorites, 0);
-  const itemIds = new Set(metrics.map((m) => m.itemId));
-  const itemCount = items.filter((i) => itemIds.has(i.id)).length || itemIds.size;
+function hasActivity(item: AvitoItem): boolean {
+  return item.views > 0 || item.contacts > 0 || item.favorites > 0 || item.spend > 0;
+}
+
+function cleanRegion(region: string): string {
+  const s = (region ?? '').trim();
+  if (!s) return '—';
+  return s.split(',')[0].replace(/^г\.?\s*/i, '').trim() || '—';
+}
+
+function aggregateItems(items: AvitoItem[], label: string): PeriodAggregate {
+  const active = items.filter(hasActivity);
+  const views = active.reduce((s, i) => s + i.views, 0);
+  const contacts = active.reduce((s, i) => s + i.contacts, 0);
+  const spend = active.reduce((s, i) => s + i.spend, 0);
+  const favorites = active.reduce((s, i) => s + i.favorites, 0);
   return {
     label,
     views,
@@ -66,7 +86,7 @@ function aggregate(metrics: ItemMetrics[], items: AvitoItem[], label: string): P
     favorites,
     cpl: calcCpl(spend, contacts),
     conversion: calcConversion(views, contacts),
-    itemCount,
+    itemCount: active.length,
   };
 }
 
@@ -98,28 +118,30 @@ export function comparePeriods(
   labelA = 'Период A',
   labelB = 'Период Б'
 ): PeriodComparison {
-  const a = aggregate(metricsA, itemsA, labelA);
-  const b = aggregate(metricsB, itemsB, labelB);
+  const periodItemsA = itemsA.filter(hasActivity);
+  const periodItemsB = itemsB.filter(hasActivity);
+  const a = aggregateItems(periodItemsA, labelA);
+  const b = aggregateItems(periodItemsB, labelB);
 
   const titleByItem = new Map<string, AvitoItem>();
   for (const it of itemsB) titleByItem.set(it.id, it);
   for (const it of itemsA) if (!titleByItem.has(it.id)) titleByItem.set(it.id, it);
 
   // суммируем метрики по объявлению в каждом периоде
-  const sumByItem = (metrics: ItemMetrics[]) => {
+  const sumByItem = (items: AvitoItem[]) => {
     const m = new Map<string, { views: number; contacts: number; spend: number }>();
-    for (const x of metrics) {
-      const cur = m.get(x.itemId) ?? { views: 0, contacts: 0, spend: 0 };
+    for (const x of items) {
+      const cur = m.get(x.id) ?? { views: 0, contacts: 0, spend: 0 };
       cur.views += x.views;
       cur.contacts += x.contacts;
       cur.spend += x.spend;
-      m.set(x.itemId, cur);
+      m.set(x.id, cur);
     }
     return m;
   };
 
-  const aMap = sumByItem(metricsA);
-  const bMap = sumByItem(metricsB);
+  const aMap = sumByItem(periodItemsA);
+  const bMap = sumByItem(periodItemsB);
   const allIds = new Set<string>([...aMap.keys(), ...bMap.keys()]);
 
   const items: ItemDiff[] = [];
@@ -150,6 +172,48 @@ export function comparePeriods(
   // Сортируем по абсолютному изменению контактов
   items.sort((x, y) => Math.abs(y.deltaContacts) - Math.abs(x.deltaContacts));
 
+  const sumByRegion = (items: AvitoItem[]) => {
+    const m = new Map<string, { views: number; contacts: number; spend: number }>();
+    for (const x of items) {
+      const region = cleanRegion(x.region);
+      const cur = m.get(region) ?? { views: 0, contacts: 0, spend: 0 };
+      cur.views += x.views;
+      cur.contacts += x.contacts;
+      cur.spend += x.spend;
+      m.set(region, cur);
+    }
+    return m;
+  };
+
+  const aCityMap = sumByRegion(periodItemsA);
+  const bCityMap = sumByRegion(periodItemsB);
+  const allRegions = new Set<string>([...aCityMap.keys(), ...bCityMap.keys()]);
+  const cities: CityDiff[] = [];
+  for (const region of allRegions) {
+    const av = aCityMap.get(region) ?? { views: 0, contacts: 0, spend: 0 };
+    const bv = bCityMap.get(region) ?? { views: 0, contacts: 0, spend: 0 };
+    const cplA = calcCpl(av.spend, av.contacts);
+    const cplB = calcCpl(bv.spend, bv.contacts);
+    cities.push({
+      region,
+      a: { ...av, cpl: cplA },
+      b: { ...bv, cpl: cplB },
+      deltaContacts: bv.contacts - av.contacts,
+      deltaSpend: bv.spend - av.spend,
+      cplChangePercent:
+        cplA != null && cplB != null
+          ? +diffPercent(cplA, cplB).toFixed(1)
+          : null,
+      contactsChangePercent:
+        av.contacts > 0 ? +diffPercent(av.contacts, bv.contacts).toFixed(1) : null,
+    });
+  }
+  cities.sort((x, y) => {
+    const contactDelta = Math.abs(y.deltaContacts) - Math.abs(x.deltaContacts);
+    if (contactDelta !== 0) return contactDelta;
+    return Math.abs(y.deltaSpend) - Math.abs(x.deltaSpend);
+  });
+
   return {
     a,
     b,
@@ -160,6 +224,7 @@ export function comparePeriods(
       cpl: diffNullable(a.cpl, b.cpl),
       conversion: diffNullable(a.conversion, b.conversion),
     },
+    cities,
     items,
   };
 }
