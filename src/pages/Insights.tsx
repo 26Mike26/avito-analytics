@@ -6,19 +6,22 @@ import {
   TrendingDown,
   AlertTriangle,
   Sparkles,
+  ListChecks,
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Empty } from '../components/Empty';
-import { Badge } from '../components/Badge';
+import { Badge, PriorityBadge } from '../components/Badge';
 import { useStore } from '../store/useStore';
 import {
+  buildChecklistRecommendations,
   buildInsights,
   compareWords,
   scoreItems,
   summarizeBucket,
+  type ChecklistRecommendation,
   type ItemScore,
 } from '../lib/insights';
-import { formatPercent, formatRub } from '../lib/analytics';
+import { formatNumber, formatPercent, formatRub } from '../lib/analytics';
 
 const BUCKET_LABELS = {
   top: 'Успешные (топ 33%)',
@@ -38,6 +41,10 @@ export default function Insights() {
     () => buildInsights(topSummary, bottomSummary, words),
     [topSummary, bottomSummary, words]
   );
+  const checklistRecommendations = useMemo(
+    () => buildChecklistRecommendations(scored, kpi),
+    [scored, kpi]
+  );
 
   const [bucket, setBucket] = useState<'top' | 'bottom' | 'all'>('all');
 
@@ -49,7 +56,7 @@ export default function Insights() {
       >
         <Empty
           title="Недостаточно данных"
-          hint="Нужны активные объявления хотя бы с несколькими контактами и расходом. Подождите 5–7 дней или импортируйте выгрузку."
+          hint="Нужны активные объявления с просмотрами, показами, избранным или расходом. Подождите 5–7 дней или импортируйте выгрузку."
         />
       </Layout>
     );
@@ -120,6 +127,10 @@ export default function Insights() {
             ))}
           </ul>
         </div>
+      )}
+
+      {checklistRecommendations.length > 0 && (
+        <ChecklistRecommendations recommendations={checklistRecommendations} />
       )}
 
       {/* Слова */}
@@ -250,6 +261,97 @@ export default function Insights() {
         </div>
       </div>
     </Layout>
+  );
+}
+
+function ChecklistRecommendations({
+  recommendations,
+}: {
+  recommendations: ChecklistRecommendation[];
+}) {
+  return (
+    <div className="card p-4 sm:p-5 mb-6">
+      <div className="flex flex-wrap items-start gap-3 mb-4">
+        <div className="text-accent mt-0.5">
+          <ListChecks className="w-5 h-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-white">
+            Рекомендации по неуспешным объявлениям
+          </h2>
+          <div className="text-sm text-ink-400 mt-1">
+            Автоматическая проверка по чек-листу: заголовки, параметры, фото/видео,
+            текст, цена и продвижение.
+          </div>
+        </div>
+      </div>
+
+      <div className="divide-y divide-ink-700/70">
+        {recommendations.map((rec) => (
+          <article key={rec.item.id} className="py-4 first:pt-0 last:pb-0">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <Link
+                  to={`/items/${rec.item.id}`}
+                  className="text-white font-semibold hover:text-accent"
+                >
+                  {rec.item.title}
+                </Link>
+                <div className="text-xs text-ink-400 mt-1">
+                  {[rec.item.category, rec.item.region].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              <PriorityBadge priority={rec.priority} />
+            </div>
+
+            <div className="flex flex-wrap gap-2 mt-3">
+              <Badge tone="gray">Score {rec.score}</Badge>
+              <Badge tone={rec.cpl == null ? 'red' : 'gray'}>
+                CPL {rec.cpl != null ? formatRub(rec.cpl) : 'нет лидов'}
+              </Badge>
+              <Badge tone={rec.conversion != null && rec.conversion < 1 ? 'amber' : 'gray'}>
+                CR {rec.conversion != null ? formatPercent(rec.conversion) : '—'}
+              </Badge>
+              <Badge tone={rec.ctr != null && rec.ctr < 1 ? 'amber' : 'gray'}>
+                CTR {rec.ctr != null ? formatPercent(rec.ctr) : '—'}
+              </Badge>
+              <Badge tone="gray">Просмотры {formatNumber(rec.item.views)}</Badge>
+              <Badge tone="gray">Контакты {formatNumber(rec.item.contacts)}</Badge>
+            </div>
+
+            <div className="mt-3 text-sm text-ink-300">
+              {(rec.reasons.length > 0
+                ? rec.reasons
+                : ['объявление попало в нижнюю группу по эффективности']
+              ).join('; ')}
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {rec.checks.map((check) => (
+                <div
+                  key={`${check.group}-${check.title}`}
+                  className={[
+                    'rounded-xl border p-3',
+                    check.severity === 'bad'
+                      ? 'bg-rose-500/5 border-rose-500/20'
+                      : 'bg-amber-500/5 border-amber-500/20',
+                  ].join(' ')}
+                >
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <Badge tone={check.severity === 'bad' ? 'red' : 'amber'}>
+                      {check.group}
+                    </Badge>
+                    <div className="text-sm font-semibold text-white">{check.title}</div>
+                  </div>
+                  <div className="text-xs text-ink-400 leading-relaxed">{check.detail}</div>
+                  <div className="text-sm text-ink-200 mt-2">{check.action}</div>
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
   );
 }
 
