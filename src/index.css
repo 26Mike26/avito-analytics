@@ -63,6 +63,8 @@ html.light .bg-ink-800 { background-color: #ffffff !important; }
 html.light .bg-ink-750 { background-color: #f0f1f4 !important; }
 html.light .bg-ink-700 { background-color: #e2e4ea !important; }
 html.light .bg-ink-900\/80 { background-color: rgba(255, 255, 255, 0.85) !important; }
+html.light .bg-ink-900\/50 { background-color: rgba(255, 255, 255, 0.88) !important; }
+html.light .bg-ink-900\/60 { background-color: rgba(255, 255, 255, 0.90) !important; }
 html.light .bg-ink-950\/95 { background-color: rgba(255, 255, 255, 0.95) !important; }
 html.light .bg-ink-850\/70 { background-color: rgba(244, 245, 247, 0.85) !important; }
 
@@ -77,10 +79,12 @@ html.light .text-ink-500 { color: #9aa0ad !important; }
 /* ─── ТОКЕНЫ: рамки ─── */
 html.light .border-ink-600 { border-color: #d4d7df !important; }
 html.light .border-ink-700 { border-color: #e2e4ea !important; }
+html.light .border-ink-700\/70 { border-color: #e2e4ea !important; }
 html.light .border-ink-700\/80 { border-color: #e2e4ea !important; }
 html.light .border-ink-800 { border-color: #ecedf1 !important; }
 
 /* ─── divide-* для линий между строк/столбцов ─── */
+html.light .divide-ink-700\/70 > :not([hidden]) ~ :not([hidden]) { border-color: #e2e4ea !important; }
 html.light .divide-ink-800 > :not([hidden]) ~ :not([hidden]) { border-color: #ecedf1 !important; }
 
 /* ─── Карточки ─── */
@@ -179,7 +183,9 @@ html.light .bg-accent\/15 { background-color: rgba(255, 106, 0, 0.13) !important
 
 /* Цветной текст в светлой теме — насыщеннее */
 html.light .text-rose-300 { color: #be123c !important; }
+html.light .text-rose-200\/90 { color: #be123c !important; }
 html.light .text-emerald-300 { color: #047857 !important; }
+html.light .text-emerald-300\/80 { color: #047857 !important; }
 html.light .text-amber-300 { color: #b45309 !important; }
 html.light .text-amber-200 { color: #92400e !important; }
 html.light .text-blue-300 { color: #1d4ed8 !important; }
@@ -187,8 +193,14 @@ html.light .text-violet-300 { color: #6d28d9 !important; }
 
 /* Цветные рамки */
 html.light .border-rose-500\/30 { border-color: rgba(244, 63, 94, 0.45) !important; }
+html.light .border-rose-500\/20 { border-color: rgba(244, 63, 94, 0.34) !important; }
 html.light .border-emerald-500\/30 { border-color: rgba(16, 185, 129, 0.45) !important; }
+html.light .border-emerald-500\/20 { border-color: rgba(16, 185, 129, 0.32) !important; }
+html.light .border-emerald-500\/40 { border-color: rgba(16, 185, 129, 0.55) !important; }
+html.light .border-emerald-500\/50 { border-color: rgba(16, 185, 129, 0.65) !important; }
 html.light .border-amber-500\/30 { border-color: rgba(245, 158, 11, 0.50) !important; }
+html.light .border-amber-500\/20 { border-color: rgba(245, 158, 11, 0.35) !important; }
+html.light .border-amber-500\/40 { border-color: rgba(245, 158, 11, 0.60) !important; }
 html.light .border-blue-500\/30 { border-color: rgba(59, 130, 246, 0.45) !important; }
 html.light .border-violet-500\/30 { border-color: rgba(139, 92, 246, 0.45) !important; }
 html.light .border-accent\/30 { border-color: rgba(255, 106, 0, 0.55) !important; }
