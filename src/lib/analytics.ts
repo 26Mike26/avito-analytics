@@ -172,12 +172,17 @@ export function categoryAverages(items: AvitoItem[]) {
 }
 
 export function regionAverages(items: AvitoItem[]) {
-  const groups = new Map<string, { spend: number; contacts: number; views: number; favorites: number }>();
+  const groups = new Map<
+    string,
+    { spend: number; contacts: number; views: number; impressions: number; favorites: number }
+  >();
   for (const it of items) {
-    const g = groups.get(it.region) ?? { spend: 0, contacts: 0, views: 0, favorites: 0 };
+    const g =
+      groups.get(it.region) ?? { spend: 0, contacts: 0, views: 0, impressions: 0, favorites: 0 };
     g.spend += it.spend;
     g.contacts += it.contacts;
     g.views += it.views;
+    g.impressions += it.impressions ?? 0;
     g.favorites += it.favorites;
     groups.set(it.region, g);
   }
@@ -186,11 +191,12 @@ export function regionAverages(items: AvitoItem[]) {
     cpl: number | null;
     /** Конверсия просмотр→контакт (CR), %. */
     conversion: number | null;
-    /** CTR в наших данных = просмотр→интерес (избранное), %. */
+    /** CTR = просмотры / показы × 100 (классическая воронка показ → клик в карточку). */
     ctr: number | null;
     spend: number;
     contacts: number;
     views: number;
+    impressions: number;
     favorites: number;
   }> = [];
   for (const [k, v] of groups.entries()) {
@@ -198,12 +204,14 @@ export function regionAverages(items: AvitoItem[]) {
       region: k,
       cpl: calcCpl(v.spend, v.contacts),
       conversion: calcConversion(v.views, v.contacts),
-      // CTR = (favorites / views) * 100  — в Авито нет отдельного CTR показ→клик,
-      // зато есть прокси: «добавили в избранное / просмотрели». Это ближайший аналог.
-      ctr: v.views > 0 ? +((v.favorites / v.views) * 100).toFixed(2) : null,
+      // CTR = views / impressions * 100 (Avito: uniqViews / views × 100).
+      // Если impressions отсутствует — null.
+      ctr:
+        v.impressions > 0 ? +((v.views / v.impressions) * 100).toFixed(2) : null,
       spend: v.spend,
       contacts: v.contacts,
       views: v.views,
+      impressions: v.impressions,
       favorites: v.favorites,
     });
   }
@@ -285,15 +293,21 @@ export function itemsInDateRange(
     return normalizedItems.map((it) => ({
       ...it,
       views: 0,
+      impressions: 0,
       contacts: 0,
       favorites: 0,
       spend: 0,
     }));
   }
-  const sumByItem = new Map<string, { views: number; contacts: number; favorites: number; spend: number }>();
+  const sumByItem = new Map<
+    string,
+    { views: number; impressions: number; contacts: number; favorites: number; spend: number }
+  >();
   for (const m of filtered) {
-    const cur = sumByItem.get(m.itemId) ?? { views: 0, contacts: 0, favorites: 0, spend: 0 };
+    const cur =
+      sumByItem.get(m.itemId) ?? { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 };
     cur.views += m.views;
+    cur.impressions += m.impressions ?? 0;
     cur.contacts += m.contacts;
     cur.favorites += m.favorites;
     cur.spend += m.spend;
@@ -316,21 +330,18 @@ export function itemsInDateRange(
   return normalizedItems.map((it) => {
     const sum = sumByItem.get(it.id);
     if (!sum) {
-      return { ...it, views: 0, contacts: 0, favorites: 0, spend: 0 };
+      return { ...it, views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 };
     }
     // Распределяем общий пул пропорционально доле просмотров.
     const cpxShare =
       totalViewsInPeriod > 0 && cpxPoolInPeriod > 0
         ? (sum.views / totalViewsInPeriod) * cpxPoolInPeriod
         : 0;
-    // Если источник — точный spendings.ads, он уже содержит ВСЁ. Иначе
-    // прибавляем per-item VAS из operations (он не входит в CPx-пул).
-    const itemSpend = useSpendingsSource
-      ? cpxShare
-      : sum.spend + cpxShare;
+    const itemSpend = useSpendingsSource ? cpxShare : sum.spend + cpxShare;
     return {
       ...it,
       views: sum.views,
+      impressions: sum.impressions,
       contacts: sum.contacts,
       favorites: sum.favorites,
       spend: Math.round(itemSpend),

@@ -156,6 +156,8 @@ export function generateMockItems(): AvitoItem[] {
       const hasRevenue = Math.random() > 0.55 && contacts > 0;
       const revenue = hasRevenue ? contacts * random(500, 3500) : undefined;
 
+      // Показы (impressions) обычно в 5–15× больше уникальных просмотров карточки
+      const impressions = Math.round(views * randomFloat(5, 15));
       items.push({
         id: `item-${id}`,
         title: `${pick(titles)} №${id}`,
@@ -166,6 +168,7 @@ export function generateMockItems(): AvitoItem[] {
         currentBid: bid,
         recommendedBid: bid, // пересчитаем позже
         views,
+        impressions,
         contacts,
         favorites,
         spend,
@@ -219,6 +222,7 @@ export function generateMetricsForItems(items: AvitoItem[]): ItemMetrics[] {
         itemId: item.id,
         date: isoDate(d),
         views: Math.max(0, v),
+        impressions: Math.max(0, v * 8), // показы примерно в 8× больше уник.просмотров
         contacts: Math.max(0, c),
         favorites: Math.max(0, f),
         spend: Math.max(0, s),

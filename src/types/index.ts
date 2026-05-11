@@ -21,7 +21,14 @@ export type AvitoItem = {
   price: number;
   currentBid: number;
   recommendedBid: number;
+  /** Уникальные просмотры карточки объявления (uniqViews в Avito API). */
   views: number;
+  /**
+   * Показы (impressions) — сколько раз объявление показывалось в выдаче
+   * (views в Avito API). Опционально — может отсутствовать в данных CSV-импорта
+   * и старых записях localStorage.
+   */
+  impressions?: number;
   contacts: number;
   favorites: number;
   spend: number;
@@ -34,7 +41,10 @@ export type AvitoItem = {
 export type ItemMetrics = {
   itemId: string;
   date: string;
+  /** Уникальные просмотры карточки (uniqViews). */
   views: number;
+  /** Показы (impressions). Опционально — могут отсутствовать в старых данных. */
+  impressions?: number;
   contacts: number;
   favorites: number;
   spend: number;

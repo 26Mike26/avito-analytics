@@ -995,15 +995,17 @@ export const useStore = create<Store>((set, get) => {
         const sum = itemMetrics.reduce(
           (acc, m) => ({
             views: acc.views + m.views,
+            impressions: acc.impressions + (m.impressions ?? 0),
             contacts: acc.contacts + m.contacts,
             favorites: acc.favorites + m.favorites,
             spend: acc.spend + m.spend,
           }),
-          { views: 0, contacts: 0, favorites: 0, spend: 0 }
+          { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
         );
         return {
           ...it,
           views: it.views || sum.views,
+          impressions: it.impressions || sum.impressions || undefined,
           contacts: it.contacts || sum.contacts,
           favorites: it.favorites || sum.favorites,
           spend: it.spend || sum.spend,

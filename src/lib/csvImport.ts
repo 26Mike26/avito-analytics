@@ -40,17 +40,25 @@ const ALIASES: Record<string, string[]> = {
   region: ['region', 'город', 'регион', 'регион размещения', 'location'],
   price: ['price', 'цена'],
   current_bid: ['current_bid', 'bid', 'ставка', 'cpc'],
+  // Уникальные просмотры карточки (uniqViews)
   views: [
     'views',
     'просмотры',
-    'impressions',
     'просмотрели',
     'просмотрело',
     'уник. просмотры',
     'уник просмотры',
     'unique views',
+    'uniqviews',
   ],
-  impressions: ['показы'],
+  // Показы (impressions) — сколько раз карточка показалась в выдаче
+  impressions: [
+    'impressions',
+    'показы',
+    'показали',
+    'показов',
+    'показано',
+  ],
   contacts: [
     'contacts',
     'контакты',
@@ -224,10 +232,13 @@ export function parseCsvImport(text: string): CsvImportResult {
     if (isMetricsFormat) {
       const date = str(cols[idx.date!]);
       if (!date) continue;
+      const imprNum =
+        idx.impressions !== undefined ? num(cols[idx.impressions]) : 0;
       metrics.push({
         itemId,
         date,
         views: num(cols[idx.views!]),
+        impressions: imprNum || undefined,
         contacts: num(cols[idx.contacts!]),
         favorites: num(cols[idx.favorites!]),
         spend: num(cols[idx.spend!]),
@@ -254,6 +265,9 @@ export function parseCsvImport(text: string): CsvImportResult {
       }
       const it = itemsMap.get(itemId)!;
       it.views += num(cols[idx.views!]);
+      if (idx.impressions !== undefined) {
+        it.impressions = (it.impressions ?? 0) + num(cols[idx.impressions]);
+      }
       it.contacts += num(cols[idx.contacts!]);
       it.favorites += num(cols[idx.favorites!]);
       it.spend += num(cols[idx.spend!]);
@@ -274,6 +288,10 @@ export function parseCsvImport(text: string): CsvImportResult {
         currentBid: bid,
         recommendedBid: bid,
         views: num(cols[idx.views!]),
+        impressions:
+          idx.impressions !== undefined
+            ? num(cols[idx.impressions]) || undefined
+            : undefined,
         contacts: num(cols[idx.contacts!]),
         favorites: num(cols[idx.favorites!]),
         spend: num(cols[idx.spend!]),

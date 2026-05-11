@@ -200,6 +200,141 @@ html.light .ring-accent { --tw-ring-color: rgba(255, 106, 0, 0.45) !important; }
 /* Backdrop (overlay) для модалок */
 html.light .bg-black\/60 { background-color: rgba(15, 17, 21, 0.40) !important; }
 
+/* ─── Дополнительное покрытие непокрытых случаев ─── */
+
+/* text-white внутри оранжевой кнопки (btn-primary) ОСТАЁТСЯ белым */
+html.light .btn-primary,
+html.light .btn-primary:hover { color: #ffffff !important; }
+
+/* text-amber-300, -200, -100 — все версии тёмно-жёлтый */
+html.light .text-amber-100,
+html.light .text-amber-200,
+html.light .text-amber-400 { color: #b45309 !important; }
+html.light .text-rose-100 { color: #be123c !important; }
+html.light .text-emerald-100,
+html.light .text-emerald-200 { color: #047857 !important; }
+html.light .text-blue-100,
+html.light .text-blue-200 { color: #1d4ed8 !important; }
+html.light .text-violet-100,
+html.light .text-violet-200 { color: #6d28d9 !important; }
+html.light .text-accent-200 { color: #c2410c !important; }
+
+/* ring-* классы для светлой темы (фокус инпутов, активные пилюли) */
+html.light .focus\:ring-accent\/40:focus {
+  --tw-ring-color: rgba(255, 106, 0, 0.30) !important;
+}
+html.light .ring-2.ring-accent {
+  --tw-ring-color: rgba(255, 106, 0, 0.55) !important;
+}
+
+/* shadow-card для светлой — без чёрного «inset» */
+html.light .shadow-card {
+  box-shadow: 0 1px 2px rgba(15, 17, 21, 0.04), 0 8px 28px rgba(15, 17, 21, 0.06) !important;
+}
+html.light .shadow-glow {
+  box-shadow: 0 0 0 1px rgba(255, 106, 0, 0.25), 0 0 24px rgba(255, 106, 0, 0.15) !important;
+}
+
+/* Светлая тема: btn-danger */
+html.light .btn-danger {
+  background: rgba(244, 63, 94, 0.08) !important;
+  color: #be123c !important;
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+html.light .btn-danger:hover { background: rgba(244, 63, 94, 0.14) !important; }
+
+/* Chip */
+html.light .chip { font-weight: 600; }
+
+/* Sidebar навигация: активный пункт делаем оранжево-приглушённым */
+html.light aside nav a.bg-ink-800 {
+  background-color: #fff3eb !important;
+  color: #c2410c !important;
+}
+html.light aside nav a.bg-ink-800 .text-accent { color: #c2410c !important; }
+html.light aside nav a:not(.bg-ink-800):hover { background-color: #f4f5f7 !important; }
+
+/* Sidebar нижняя «Демо-режим» подсказка */
+html.light aside .text-ink-500 { color: #9aa0ad !important; }
+
+/* AccountSwitcher dropdown */
+html.light .bg-ink-800 { background-color: #ffffff !important; }
+html.light .bg-ink-850 { background-color: #f4f5f7 !important; }
+
+/* Bid input в Items — был text-white на тёмном фоне */
+html.light button.hover\:text-accent { color: #1a1d24 !important; }
+html.light button.hover\:text-accent:hover { color: #c2410c !important; }
+
+/* Inputs date/number */
+html.light input.input,
+html.light input[type="date"].input,
+html.light input[type="number"].input,
+html.light input[type="text"].input,
+html.light input[type="email"].input,
+html.light input[type="password"].input,
+html.light input[type="search"].input {
+  background: #ffffff !important;
+  color: #0f1115 !important;
+  border-color: #d4d7df !important;
+}
+
+/* Селекторы (dropdown стрелочки в Webkit для color-scheme: light) */
+html.light select.input,
+html.light select { color-scheme: light; }
+
+/* Range slider */
+html.light input[type="range"] { accent-color: #ff7a1a; }
+
+/* Login/Signup — у них общий контейнер с min-h-screen + bg-ink-900 */
+html.light main.min-h-screen,
+html.light .min-h-screen.bg-ink-900 { background-color: #f4f5f7 !important; }
+html.light .min-h-screen.bg-ink-950 { background-color: #f4f5f7 !important; }
+
+/* "Pill" текст внутри активной — оранжевый на белом фоне */
+html.light .pill-nav-item.active.bg-accent\/15,
+html.light .pill-nav-item.active.bg-accent\/10 {
+  background-color: rgba(255, 106, 0, 0.13) !important;
+  color: #c2410c !important;
+}
+html.light .pill-nav-item.active .text-accent { color: #c2410c !important; }
+
+/* Tables: данные в светлой теме лучше читаются на белом */
+html.light td.table-td a { color: #0f1115 !important; }
+html.light td.table-td a:hover { color: #c2410c !important; }
+
+/* Empty (через лейаут) — карточка-заглушка */
+html.light .text-ink-200 { color: #2c3038 !important; }
+
+/* details/summary в журнале действий */
+html.light details summary { color: #c2410c !important; }
+html.light details pre {
+  background: #f4f5f7 !important;
+  border-color: #e2e4ea !important;
+  color: #1a1d24 !important;
+}
+
+/* Backdrop для drawer (мобильный сайдбар) */
+html.light .fixed.inset-0.bg-black\/60 {
+  background-color: rgba(15, 17, 21, 0.40) !important;
+}
+
+/* Карточка-заглушка KpiCard и квадратик иконки внутри карточек */
+html.light .w-9.h-9.rounded-xl.bg-ink-850 {
+  background-color: #f4f5f7 !important;
+  border-color: #e2e4ea !important;
+}
+
+/* Карточки balance в Dashboard: tone="white" */
+html.light .border-ink-700.bg-ink-850 {
+  background-color: #f4f5f7 !important;
+  border-color: #e2e4ea !important;
+}
+
+/* «Глобальные» tailwind классы text-* у tone цветов в KpiCard */
+html.light .text-2xl.font-extrabold.text-emerald-300 { color: #047857 !important; }
+html.light .text-2xl.font-extrabold.text-amber-300 { color: #b45309 !important; }
+html.light .text-2xl.font-extrabold.text-rose-300 { color: #be123c !important; }
+
 /* Скрытые декоративные «шёлковые» линии для тёмного фона */
 .silk-bg {
   position: relative;

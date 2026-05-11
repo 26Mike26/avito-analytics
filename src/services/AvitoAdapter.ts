@@ -241,8 +241,8 @@ export class AvitoAdapter implements IAvitoAdapter {
             dateFrom,
             dateTo,
             itemIds: slice,
-            // Avito v2 enum: uniqViews, contacts, favorites, spent. Поля cost нет.
-            fields: ['uniqViews', 'contacts', 'favorites', 'spent'],
+            // Avito v2 enum: views(=показы), uniqViews(=уник.просмотры), contacts, favorites, spent.
+            fields: ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
             periodGrouping: 'day',
           }),
           headers: { 'Content-Type': 'application/json' },
@@ -270,10 +270,12 @@ export class AvitoAdapter implements IAvitoAdapter {
           const id = String(row.itemId);
           for (const s of row.stats ?? []) {
             const spend = Number(s.spent ?? 0);
+            // Avito: views = показы, uniqViews = уник.просмотры карточки
             out.push({
               itemId: id,
               date: s.date,
-              views: Number(s.uniqViews ?? s.views ?? 0),
+              views: Number(s.uniqViews ?? 0),
+              impressions: Number(s.views ?? 0),
               contacts: Number(s.contacts ?? 0),
               favorites: Number(s.favorites ?? 0),
               spend,
@@ -361,6 +363,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           currentBid: 0,
           recommendedBid: 0,
           views: 0,
+          impressions: 0,
           contacts: 0,
           favorites: 0,
           spend: 0,
@@ -417,9 +420,9 @@ export class AvitoAdapter implements IAvitoAdapter {
                 dateFrom: fmt(past),
                 dateTo: fmt(today),
                 itemIds: slice,
-                // Avito API enum v1: views, uniqViews, contacts, uniqContacts,
-                // favorites, uniqFavorites. Поля «spent» в v1 нет.
-                fields: ['uniqViews', 'contacts', 'favorites'],
+                // Avito API enum v1: views(=показы), uniqViews(=уник.просмотры карточки),
+                // contacts, uniqContacts, favorites, uniqFavorites. Поля «spent» в v1 нет.
+                fields: ['views', 'uniqViews', 'contacts', 'favorites'],
                 periodGrouping: 'day',
               }),
               headers: { 'Content-Type': 'application/json' },
@@ -442,8 +445,8 @@ export class AvitoAdapter implements IAvitoAdapter {
               out.push({
                 itemId: id,
                 date: s.date,
-                // uniqViews приоритетнее, fallback на views
-                views: Number(s.uniqViews ?? s.views ?? 0),
+                views: Number(s.uniqViews ?? 0),
+                impressions: Number(s.views ?? 0),
                 contacts: Number(s.contacts ?? 0),
                 favorites: Number(s.favorites ?? 0),
                 spend: Number(s.spent ?? 0),
