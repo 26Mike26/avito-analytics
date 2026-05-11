@@ -24,6 +24,7 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
+import { lastNDaysRange } from '../lib/analytics';
 import {
   AvitoAdapter,
   type AccountCharge,
@@ -37,6 +38,9 @@ import { SUPABASE_ENABLED } from '../services/supabase';
 const ACCOUNTS_KEY = 'avito-app-accounts';
 const ACTIVE_KEY = 'avito-app-active-account';
 const LOG_KEY = 'avito-app-action-log';
+const ANALYTICS_PERIOD_KEY = 'avito-app-analytics-period';
+
+type ReportPeriod = { from: string; to: string };
 
 function genId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
@@ -90,6 +94,24 @@ function saveLog(entries: ActionLogEntry[]) {
   // ограничим размер лога 5000 записей
   const trimmed = entries.slice(-5000);
   localStorage.setItem(LOG_KEY, JSON.stringify(trimmed));
+}
+function isValidPeriod(value: unknown): value is ReportPeriod {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as ReportPeriod;
+  return /^\d{4}-\d{2}-\d{2}$/.test(p.from) && /^\d{4}-\d{2}-\d{2}$/.test(p.to);
+}
+function loadAnalyticsPeriod(): ReportPeriod {
+  try {
+    const raw = localStorage.getItem(ANALYTICS_PERIOD_KEY);
+    if (!raw) return lastNDaysRange(30);
+    const parsed = JSON.parse(raw);
+    return isValidPeriod(parsed) ? parsed : lastNDaysRange(30);
+  } catch {
+    return lastNDaysRange(30);
+  }
+}
+function saveAnalyticsPeriod(period: ReportPeriod) {
+  localStorage.setItem(ANALYTICS_PERIOD_KEY, JSON.stringify(period));
 }
 
 function createDemoAccount(ownerId: string, name: string, seed = 0): AccountData {
@@ -155,6 +177,9 @@ type Store = {
   hasPerItemSpend: boolean;
   /** Точные суммы расхода через /stats/v2/spendings (если ручка доступна). */
   spendings: SpendingsBreakdown | null;
+  /** Общий выбранный период для дашборда, аналитики и списка объявлений. */
+  analyticsPeriod: ReportPeriod;
+  setAnalyticsPeriod: (period: ReportPeriod) => void;
 
   // ───── Управление сессией
   bootstrap: () => Promise<void>;
@@ -283,6 +308,7 @@ export const useStore = create<Store>((set, get) => {
   const persistedAccounts = loadAccounts();
   const persistedActive = loadActiveId();
   const persistedLog = loadLog();
+  const persistedAnalyticsPeriod = loadAnalyticsPeriod();
 
   return {
     session: null,
@@ -305,6 +331,11 @@ export const useStore = create<Store>((set, get) => {
     accountCharges: [],
     hasPerItemSpend: false,
     spendings: null,
+    analyticsPeriod: persistedAnalyticsPeriod,
+    setAnalyticsPeriod: (period) => {
+      saveAnalyticsPeriod(period);
+      set({ analyticsPeriod: period });
+    },
 
     bootstrap: async () => {
       const current = get();

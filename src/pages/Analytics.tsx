@@ -25,7 +25,6 @@ import {
   formatPercent,
   formatRub,
   itemsInDateRange,
-  lastNDaysRange,
   regionAverages,
 } from '../lib/analytics';
 import { ProgressBar } from '../components/ProgressBar';
@@ -37,8 +36,9 @@ export default function Analytics() {
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
   const kpi = useStore((s) => s.kpi);
+  const period = useStore((s) => s.analyticsPeriod);
+  const setPeriod = useStore((s) => s.setAnalyticsPeriod);
 
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -27,7 +27,6 @@ import {
   formatRub,
   calcCpl,
   itemsInDateRange,
-  lastNDaysRange,
   regionAverages,
 } from '../lib/analytics';
 import { MapPin } from 'lucide-react';
@@ -41,8 +40,8 @@ export default function Dashboard() {
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
-
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
+  const period = useStore((s) => s.analyticsPeriod);
+  const setPeriod = useStore((s) => s.setAnalyticsPeriod);
 
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу

@@ -19,7 +19,6 @@ import {
   formatPercent,
   formatRub,
   itemsInDateRange,
-  lastNDaysRange,
 } from '../lib/analytics';
 import { Empty } from '../components/Empty';
 import type { AvitoItem } from '../types';
@@ -51,13 +50,14 @@ export default function Items() {
   const spendings = useStore((s) => s.spendings);
   const kpi = useStore((s) => s.kpi);
   const setItemBid = useStore((s) => s.setItemBid);
+  const period = useStore((s) => s.analyticsPeriod);
+  const setPeriod = useStore((s) => s.setAnalyticsPeriod);
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
   const [efficiency, setEfficiency] = useState<EfficiencyFilter>('all');
-  const [period, setPeriod] = useState(() => lastNDaysRange(30));
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
