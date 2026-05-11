@@ -76,6 +76,12 @@ export type SpendingsBreakdown = {
   }>;
 };
 
+export type FilteredSpendingsByDate = Array<{
+  date: string;
+  ads: number;
+  total: number;
+}>;
+
 /** Баланс аккаунта в Авито. */
 export type AvitoBalance = {
   /** Реальный баланс (рубли, доступные на счёте). */
@@ -141,6 +147,15 @@ export interface IAvitoAdapter {
     dateTo: string;
     itemIds: number[];
   }): Promise<{ ads: number; total: number } | null>;
+  /**
+   * Точный расход для подмножества itemIDs с дневной разбивкой.
+   * Нужен, чтобы одним запросом уточнять сразу оба сравниваемых периода.
+   */
+  fetchAdsForItemsByDate(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<FilteredSpendingsByDate | null>;
   /**
    * Подтянуть текущие ставки CPx (цена за целевое действие) по объявлениям.
    * Возвращает Map<itemId → ставка_в_рублях>. В демо-режиме — пустая мапа.
@@ -770,6 +785,58 @@ export class AvitoAdapter implements IAvitoAdapter {
       return { ads, total };
     } catch (e) {
       console.info('[AvitoAdapter] fetchAdsForItems error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Та же ручка /stats/v2/spendings, но возвращаем дневные значения.
+   * Используется в сравнении периодов: можно запросить широкий диапазон
+   * и разложить точный расход по периоду A и периоду Б без двух отдельных вызовов.
+   */
+  async fetchAdsForItemsByDate(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<FilteredSpendingsByDate | null> {
+    if (this.settings.mode !== 'api') return null;
+    if (!PROXY_BASE) return null;
+    if (opts.itemIds.length === 0) return [];
+    try {
+      const data = await proxyFetch<{
+        result?: {
+          groupings?: Array<{
+            date: string;
+            spendings: Array<{ slug: string; value: number }>;
+          }>;
+        };
+        _spendings_unavailable?: boolean;
+      }>('/api/stats/spendings', {
+        method: 'POST',
+        ...this.headers(),
+        body: JSON.stringify({
+          dateFrom: opts.dateFrom,
+          dateTo: opts.dateTo,
+          grouping: 'day',
+          spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
+          filter: { itemIDs: opts.itemIds.slice(0, 200) },
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (data._spendings_unavailable) return null;
+      const groups = data.result?.groupings ?? [];
+      return groups.map((g) => {
+        let ads = 0;
+        let total = 0;
+        for (const s of g.spendings) {
+          const v = Number(s.value ?? 0);
+          total += v;
+          if (s.slug === 'promotion' || s.slug === 'presence') ads += v;
+        }
+        return { date: g.date, ads, total };
+      });
+    } catch (e) {
+      console.info('[AvitoAdapter] fetchAdsForItemsByDate error:', e);
       return null;
     }
   }

@@ -1,11 +1,13 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarRange,
   Eye,
   FileSpreadsheet,
+  Loader2,
   Phone,
+  Wand2,
   Wallet,
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
@@ -16,13 +18,24 @@ import {
   comparePeriods,
   defaultRanges,
   type CityDiff,
+  type ItemDiff,
   type PeriodComparison,
 } from '../lib/compare';
-import { formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
+import { calcCpl, formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
 import type { AvitoItem, ItemMetrics } from '../types';
 
 type Mode = 'date' | 'csv';
+type DateRange = { from: string; to: string };
+type PrecisePair = { a: number; b: number };
+type PreciseProgress = {
+  busy: boolean;
+  done: number;
+  total: number;
+  nextEta?: number;
+  label?: string;
+  error?: string;
+};
 
 export default function Compare() {
   const items = useStore((s) => s.items);
@@ -30,6 +43,7 @@ export default function Compare() {
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
+  const adapter = useStore((s) => s.adapter);
 
   const [mode, setMode] = useState<Mode>('date');
 
@@ -51,6 +65,14 @@ export default function Compare() {
   } | null>(null);
   const inputARef = useRef<HTMLInputElement>(null);
   const inputBRef = useRef<HTMLInputElement>(null);
+  const preciseRunId = useRef(0);
+  const [preciseCities, setPreciseCities] = useState<Map<string, PrecisePair>>(new Map());
+  const [preciseItems, setPreciseItems] = useState<Map<string, PrecisePair>>(new Map());
+  const [preciseProgress, setPreciseProgress] = useState<PreciseProgress>({
+    busy: false,
+    done: 0,
+    total: 0,
+  });
 
   const handleCsv = async (
     file: File,
@@ -63,7 +85,7 @@ export default function Compare() {
 
   const getPeriodSpendTotals = useMemo(
     () =>
-      (range: { from: string; to: string }) => {
+      (range: DateRange) => {
         if (spendings) {
           const inRange = spendings.byDate.filter(
             (d) => d.date >= range.from && d.date <= range.to
@@ -82,11 +104,12 @@ export default function Compare() {
     [accountCharges, spendings]
   );
 
-  const comparison = useMemo<PeriodComparison | null>(() => {
-    if (mode === 'date') {
-      const totalsA = getPeriodSpendTotals(dateA);
-      const totalsB = getPeriodSpendTotals(dateB);
-      const periodItemsA = itemsInDateRange(
+  const datePeriodItems = useMemo(() => {
+    if (mode !== 'date') return null;
+    const totalsA = getPeriodSpendTotals(dateA);
+    const totalsB = getPeriodSpendTotals(dateB);
+    return {
+      a: itemsInDateRange(
         items,
         metrics,
         dateA.from,
@@ -95,8 +118,8 @@ export default function Compare() {
         hasPerItemSpend,
         totalsA.ads,
         totalsA.other
-      );
-      const periodItemsB = itemsInDateRange(
+      ),
+      b: itemsInDateRange(
         items,
         metrics,
         dateB.from,
@@ -105,14 +128,29 @@ export default function Compare() {
         hasPerItemSpend,
         totalsB.ads,
         totalsB.other
-      );
-      const hasData = [...periodItemsA, ...periodItemsB].some(hasComparisonActivity);
+      ),
+    };
+  }, [
+    mode,
+    dateA,
+    dateB,
+    items,
+    metrics,
+    accountCharges,
+    hasPerItemSpend,
+    getPeriodSpendTotals,
+  ]);
+
+  const baseComparison = useMemo<PeriodComparison | null>(() => {
+    if (mode === 'date') {
+      if (!datePeriodItems) return null;
+      const hasData = [...datePeriodItems.a, ...datePeriodItems.b].some(hasComparisonActivity);
       if (!hasData) return null;
       return comparePeriods(
         [],
         [],
-        periodItemsA,
-        periodItemsB,
+        datePeriodItems.a,
+        datePeriodItems.b,
         `${dateA.from} → ${dateA.to}`,
         `${dateB.from} → ${dateB.to}`
       );
@@ -122,18 +160,114 @@ export default function Compare() {
       return comparePeriods([], [], csvA.items, csvB.items, csvA.fileName, csvB.fileName);
     }
     return null;
-  }, [
-    mode,
-    dateA,
-    dateB,
-    csvA,
-    csvB,
-    items,
-    metrics,
-    accountCharges,
-    hasPerItemSpend,
-    getPeriodSpendTotals,
-  ]);
+  }, [mode, dateA, dateB, csvA, csvB, datePeriodItems]);
+
+  const comparison = useMemo(
+    () =>
+      baseComparison
+        ? applyPreciseComparison(baseComparison, preciseCities, preciseItems)
+        : null,
+    [baseComparison, preciseCities, preciseItems]
+  );
+
+  useEffect(() => {
+    preciseRunId.current += 1;
+    setPreciseCities(new Map());
+    setPreciseItems(new Map());
+    setPreciseProgress({ busy: false, done: 0, total: 0 });
+  }, [mode, dateA.from, dateA.to, dateB.from, dateB.to]);
+
+  const runPreciseExpenses = async () => {
+    if (mode !== 'date' || !baseComparison || !datePeriodItems || preciseProgress.busy) return;
+
+    const allPeriodItems = [...datePeriodItems.a, ...datePeriodItems.b];
+    const cityTargets = [...baseComparison.cities]
+      .filter((c) => !preciseCities.has(c.region))
+      .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
+      .slice(0, 5);
+    const itemTargets = [...baseComparison.items]
+      .filter((i) => !preciseItems.has(i.itemId))
+      .filter((i) => numericItemId(i.itemId) != null)
+      .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
+      .slice(0, 10);
+
+    const targets: Array<{
+      type: 'city' | 'item';
+      key: string;
+      label: string;
+      itemIds: number[];
+    }> = [
+      ...cityTargets.map((city) => ({
+        type: 'city' as const,
+        key: city.region,
+        label: `город ${city.region}`,
+        itemIds: uniqueNumbers(
+          allPeriodItems
+            .filter((it) => cleanRegionName(it.region) === city.region)
+            .map((it) => numericItemId(it.id))
+        ),
+      })),
+      ...itemTargets.map((item) => ({
+        type: 'item' as const,
+        key: item.itemId,
+        label: item.title,
+        itemIds: uniqueNumbers([numericItemId(item.itemId)]),
+      })),
+    ].filter((t) => t.itemIds.length > 0);
+
+    if (targets.length === 0) return;
+
+    const runId = preciseRunId.current + 1;
+    preciseRunId.current = runId;
+    const dateFrom = minDate(dateA.from, dateB.from);
+    const dateTo = maxDate(dateA.to, dateB.to);
+    setPreciseProgress({ busy: true, done: 0, total: targets.length, label: targets[0].label });
+
+    const cityMap = new Map(preciseCities);
+    const itemMap = new Map(preciseItems);
+
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      if (runId !== preciseRunId.current) return;
+      setPreciseProgress((p) => ({ ...p, label: target.label }));
+      const rows = await adapter.fetchAdsForItemsByDate({
+        dateFrom,
+        dateTo,
+        itemIds: target.itemIds,
+      });
+      if (runId !== preciseRunId.current) return;
+      if (rows) {
+        const pair = {
+          a: sumRowsForRange(rows, dateA),
+          b: sumRowsForRange(rows, dateB),
+        };
+        if (target.type === 'city') {
+          cityMap.set(target.key, pair);
+          setPreciseCities(new Map(cityMap));
+        } else {
+          itemMap.set(target.key, pair);
+          setPreciseItems(new Map(itemMap));
+        }
+      } else {
+        setPreciseProgress({
+          busy: false,
+          done: i,
+          total: targets.length,
+          error: 'Avito не вернул точные расходы для этого аккаунта или периода.',
+        });
+        return;
+      }
+      setPreciseProgress({ busy: true, done: i + 1, total: targets.length });
+      if (i < targets.length - 1) {
+        const eta = Date.now() + 65_000;
+        setPreciseProgress((p) => ({ ...p, nextEta: eta, label: targets[i + 1].label }));
+        await new Promise((res) => setTimeout(res, 65_000));
+        if (runId !== preciseRunId.current) return;
+      }
+    }
+
+    setPreciseProgress({ busy: false, done: targets.length, total: targets.length });
+  };
 
   return (
     <Layout
@@ -225,7 +359,19 @@ export default function Compare() {
           }
         />
       ) : (
-        <ComparisonView c={comparison} />
+        <ComparisonView
+          c={comparison}
+          preciseControl={
+            mode === 'date' ? (
+              <PreciseCompareBar
+                cityCount={preciseCities.size}
+                itemCount={preciseItems.size}
+                progress={preciseProgress}
+                onRun={runPreciseExpenses}
+              />
+            ) : null
+          }
+        />
       )}
     </Layout>
   );
@@ -233,6 +379,77 @@ export default function Compare() {
 
 function hasComparisonActivity(item: AvitoItem): boolean {
   return item.views > 0 || item.contacts > 0 || item.favorites > 0 || item.spend > 0;
+}
+
+function cleanRegionName(region: string): string {
+  const s = (region ?? '').trim();
+  if (!s) return '—';
+  return s.split(',')[0].replace(/^г\.?\s*/i, '').trim() || '—';
+}
+
+function numericItemId(id: string): number | null {
+  const n = Number(id);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function uniqueNumbers(values: Array<number | null>): number[] {
+  return Array.from(new Set(values.filter((v): v is number => v != null)));
+}
+
+function minDate(a: string, b: string): string {
+  return a <= b ? a : b;
+}
+
+function maxDate(a: string, b: string): string {
+  return a >= b ? a : b;
+}
+
+function diffPercent(a: number, b: number): number {
+  if (a === 0) return b === 0 ? 0 : 100;
+  return ((b - a) / Math.abs(a)) * 100;
+}
+
+function sumRowsForRange(
+  rows: Array<{ date: string; ads: number; total: number }>,
+  range: DateRange
+): number {
+  return Math.round(
+    rows
+      .filter((r) => r.date >= range.from && r.date <= range.to)
+      .reduce((s, r) => s + r.total, 0)
+  );
+}
+
+function withPreciseSpend<T extends CityDiff | ItemDiff>(row: T, pair: PrecisePair): T {
+  const aCpl = calcCpl(pair.a, row.a.contacts);
+  const bCpl = calcCpl(pair.b, row.b.contacts);
+  return {
+    ...row,
+    precise: true,
+    a: { ...row.a, spend: pair.a, cpl: aCpl },
+    b: { ...row.b, spend: pair.b, cpl: bCpl },
+    deltaSpend: pair.b - pair.a,
+    cplChangePercent:
+      aCpl != null && bCpl != null ? +diffPercent(aCpl, bCpl).toFixed(1) : null,
+  };
+}
+
+function applyPreciseComparison(
+  comparison: PeriodComparison,
+  preciseCities: Map<string, PrecisePair>,
+  preciseItems: Map<string, PrecisePair>
+): PeriodComparison {
+  return {
+    ...comparison,
+    cities: comparison.cities.map((city) => {
+      const pair = preciseCities.get(city.region);
+      return pair ? withPreciseSpend(city, pair) : city;
+    }),
+    items: comparison.items.map((item) => {
+      const pair = preciseItems.get(item.itemId);
+      return pair ? withPreciseSpend(item, pair) : item;
+    }),
+  };
 }
 
 function DateRangeInput({
@@ -320,7 +537,13 @@ function CsvSlot({
   );
 }
 
-function ComparisonView({ c }: { c: PeriodComparison }) {
+function ComparisonView({
+  c,
+  preciseControl,
+}: {
+  c: PeriodComparison;
+  preciseControl?: React.ReactNode;
+}) {
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -390,6 +613,8 @@ function ComparisonView({ c }: { c: PeriodComparison }) {
         </div>
       </div>
 
+      {preciseControl}
+
       <CityComparison cities={c.cities} />
 
       {/* Топ-движение по объявлениям */}
@@ -412,7 +637,12 @@ function ComparisonView({ c }: { c: PeriodComparison }) {
             <tbody>
               {c.items.slice(0, 50).map((d) => (
                 <tr key={d.itemId} className="table-row">
-                  <td className="table-td text-white">{d.title}</td>
+                  <td className="table-td text-white">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{d.title}</span>
+                      {d.precise && <Badge tone="green">точно</Badge>}
+                    </div>
+                  </td>
                   <td className="table-td text-right whitespace-nowrap">
                     {d.a.contacts} → {d.b.contacts}
                   </td>
@@ -480,7 +710,12 @@ function CityComparison({ cities }: { cities: CityDiff[] }) {
               <tbody>
                 {cities.slice(0, 50).map((d) => (
                   <tr key={d.region} className="table-row">
-                    <td className="table-td text-white">{d.region}</td>
+                    <td className="table-td text-white">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>{d.region}</span>
+                        {d.precise && <Badge tone="green">точно</Badge>}
+                      </div>
+                    </td>
                     <td className="table-td text-right whitespace-nowrap">
                       {formatNumber(d.a.views)} → {formatNumber(d.b.views)}
                     </td>
@@ -520,6 +755,68 @@ function CityComparison({ cities }: { cities: CityDiff[] }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function PreciseCompareBar({
+  cityCount,
+  itemCount,
+  progress,
+  onRun,
+}: {
+  cityCount: number;
+  itemCount: number;
+  progress: PreciseProgress;
+  onRun: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!progress.busy) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [progress.busy]);
+
+  const secLeft = progress.nextEta
+    ? Math.max(0, Math.round((progress.nextEta - now) / 1000))
+    : 0;
+  const hasPrecise = cityCount > 0 || itemCount > 0;
+
+  return (
+    <div className="card p-4 sm:p-5 mb-6 border-accent/30 bg-accent/5">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={onRun}
+          disabled={progress.busy}
+          className="btn-secondary disabled:opacity-50"
+          title="Точный расход через Avito API: /stats/v2/spendings с filter.itemIDs. Ограничение Avito — примерно 1 запрос в минуту."
+        >
+          {progress.busy ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Wand2 className="w-4 h-4" />
+          )}
+          {progress.busy
+            ? `Уточняю ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ''}`
+            : hasPrecise
+            ? 'Уточнить ещё'
+            : 'Уточнить расходы'}
+        </button>
+        <div className="text-sm text-ink-300">
+          {progress.error
+            ? progress.error
+            : progress.busy
+            ? `Сейчас: ${progress.label ?? 'запрос к Avito'}`
+            : hasPrecise
+            ? `Точно: городов ${cityCount}, объявлений ${itemCount}.`
+            : 'Текущие расходы по городам и объявлениям могут быть распределением. Кнопка подтянет точные суммы из Avito.'}
+        </div>
+      </div>
+      <div className="text-xs text-ink-400 mt-2">
+        За один запуск уточняются топ-5 городов и топ-10 объявлений по расходу.
+        Из-за лимита Avito процесс идёт последовательно; новые точные значения
+        появляются в таблицах сразу после каждого запроса.
+      </div>
     </div>
   );
 }

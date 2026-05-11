@@ -30,6 +30,7 @@ export type ItemDiff = {
   status?: AvitoItem['status'];
   a: { views: number; contacts: number; spend: number; cpl: number | null };
   b: { views: number; contacts: number; spend: number; cpl: number | null };
+  precise?: boolean;
   deltaViews: number;
   deltaContacts: number;
   deltaSpend: number;
@@ -42,6 +43,7 @@ export type CityDiff = {
   region: string;
   a: { views: number; contacts: number; spend: number; cpl: number | null };
   b: { views: number; contacts: number; spend: number; cpl: number | null };
+  precise?: boolean;
   deltaContacts: number;
   deltaSpend: number;
   cplChangePercent: number | null;
