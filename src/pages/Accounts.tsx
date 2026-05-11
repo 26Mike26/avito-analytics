@@ -97,22 +97,12 @@ export default function Accounts() {
         const stats = calculateAccountStats(periodItems, periodKpi);
         const issues: string[] = [];
 
-        if (stats.totalContacts < periodKpi.targetLeads) {
-          issues.push(
-            `лиды: ${formatNumber(stats.totalContacts)} из ${formatNumber(periodKpi.targetLeads)}`
-          );
-        }
         if (stats.averageCpl == null) {
           if (stats.totalSpend > 0 && stats.totalContacts === 0) {
             issues.push(`CPL: нет лидов при расходе ${formatRub(stats.totalSpend)}`);
           }
         } else if (stats.averageCpl > account.kpi.targetCpl) {
           issues.push(`CPL: ${formatRub(stats.averageCpl)} выше цели ${formatRub(account.kpi.targetCpl)}`);
-        }
-        if (periodKpi.monthlyBudget > 0 && stats.totalSpend > periodKpi.monthlyBudget) {
-          issues.push(
-            `бюджет: ${formatRub(stats.totalSpend)} из ${formatRub(periodKpi.monthlyBudget)}`
-          );
         }
 
         return {
@@ -314,7 +304,7 @@ export default function Accounts() {
                       )}
                     </td>
                     <td className="table-td text-right">
-                      <span className={row.leads < row.targetLeads ? 'text-rose-300 font-semibold' : 'text-white font-semibold'}>
+                      <span className="text-white font-semibold">
                         {formatNumber(row.leads)}
                       </span>
                       <div className="text-xs text-ink-500">цель {formatNumber(row.targetLeads)}</div>
@@ -322,7 +312,7 @@ export default function Accounts() {
                     <td className="table-td text-right">
                       <span
                         className={
-                          row.averageCpl != null && row.averageCpl > row.targetCpl
+                          failed
                             ? 'text-rose-300 font-semibold'
                             : 'text-white font-semibold'
                         }
