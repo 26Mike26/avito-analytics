@@ -142,6 +142,11 @@ export default function Accounts() {
     }
   };
 
+  const saveEditedName = (account: AccountData) => {
+    renameAccount(account.id, editName.trim() || account.name);
+    setEditing(null);
+  };
+
   return (
     <Layout
       title="Аккаунты"
@@ -208,50 +213,97 @@ export default function Accounts() {
         )}
       </div>
 
-      <div className="card p-4 sm:p-5 mb-6">
-        <div className="flex flex-col xl:flex-row xl:items-start gap-4 mb-4">
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-300 flex items-center justify-center shrink-0">
-              <BarChart3 className="w-5 h-5" />
+      <div className="card p-0 overflow-hidden mb-6">
+        <div className="p-4 sm:p-5 border-b border-ink-700/70">
+          <div className="flex flex-col xl:flex-row xl:items-start gap-4">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-300 flex items-center justify-center shrink-0">
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-white">Аккаунты и KPI за период</h2>
+                <p className="text-sm text-ink-400 mt-1">
+                  Управление аккаунтами и сводка по затратам, лидам, CPL и выполнению KPI в одной таблице.
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-white">Статистика аккаунтов за период</h2>
-              <p className="text-sm text-ink-400 mt-1">
-                Сводка пересчитывается автоматически после массового обновления API и показывает выполнение KPI каждого аккаунта.
-              </p>
-            </div>
+            <PeriodPicker value={statsPeriod} onChange={setStatsPeriod} className="xl:justify-end" />
           </div>
-          <PeriodPicker value={statsPeriod} onChange={setStatsPeriod} className="xl:justify-end" />
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr>
-                <th className="table-th">Название аккаунта</th>
+                <th className="table-th min-w-[240px]">Название</th>
+                <th className="table-th text-right">Объявлений</th>
+                <th className="table-th">Режим</th>
+                <th className="table-th">Создан</th>
                 <th className="table-th text-right">Затраты</th>
                 <th className="table-th text-right">Лиды</th>
                 <th className="table-th text-right">Средний CPL</th>
-                <th className="table-th">KPI</th>
+                <th className="table-th min-w-[250px]">KPI</th>
+                <th className="table-th text-right min-w-[260px]">Действия</th>
               </tr>
             </thead>
             <tbody>
               {accountStats.map((row) => {
+                const account = row.account;
                 const failed = row.issues.length > 0;
                 return (
                   <tr
-                    key={row.account.id}
+                    key={account.id}
                     className={[
                       'table-row',
-                      failed ? 'bg-rose-500/5' : 'bg-emerald-500/0',
+                      failed ? 'bg-rose-500/5' : '',
                     ].join(' ')}
                   >
                     <td className="table-td">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-white">{row.account.name}</span>
-                        {row.account.id === currentId && <Badge tone="blue">Активный</Badge>}
-                        {row.account.integration.mode === 'api' && <Badge tone="green">API</Badge>}
-                      </div>
+                      {editing === account.id ? (
+                        <div className="flex items-center gap-2 min-w-[220px]">
+                          <input
+                            autoFocus
+                            className="input"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEditedName(account);
+                              if (e.key === 'Escape') setEditing(null);
+                            }}
+                          />
+                          <button
+                            className="btn-secondary"
+                            onClick={() => saveEditedName(account)}
+                            title="Сохранить название"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-white">{account.name}</span>
+                          {account.id === currentId && <Badge tone="blue">Активный</Badge>}
+                          <button
+                            className="text-ink-500 hover:text-accent"
+                            onClick={() => {
+                              setEditing(account.id);
+                              setEditName(account.name);
+                            }}
+                            title="Переименовать"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="table-td text-right">{account.items.length}</td>
+                    <td className="table-td">
+                      {account.integration.mode === 'demo' && <Badge tone="amber">Демо</Badge>}
+                      {account.integration.mode === 'csv' && <Badge tone="violet">CSV</Badge>}
+                      {account.integration.mode === 'api' && <Badge tone="green">API</Badge>}
+                    </td>
+                    <td className="table-td text-ink-400">
+                      {new Date(account.createdAt).toLocaleDateString('ru-RU')}
                     </td>
                     <td className="table-td text-right text-white font-semibold">
                       {formatRub(row.spend)}
@@ -279,7 +331,7 @@ export default function Accounts() {
                       </span>
                       <div className="text-xs text-ink-500">цель {formatRub(row.targetCpl)}</div>
                     </td>
-                    <td className="table-td min-w-[260px]">
+                    <td className="table-td">
                       {failed ? (
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center gap-2">
@@ -294,6 +346,28 @@ export default function Accounts() {
                         <Badge tone="green">В норме</Badge>
                       )}
                     </td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {account.id !== currentId && (
+                        <button
+                          className="btn-secondary mr-2"
+                          onClick={() => switchAccount(account.id)}
+                        >
+                          Сделать активным
+                        </button>
+                      )}
+                      {userAccounts.length > 1 && (
+                        <button
+                          className="btn-danger"
+                          onClick={() => {
+                            if (confirm(`Удалить аккаунт «${account.name}»? Все его данные будут стёрты.`)) {
+                              removeAccount(account.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" /> Удалить
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -302,115 +376,28 @@ export default function Accounts() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 card p-0 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr>
-                <th className="table-th">Название</th>
-                <th className="table-th">Объявлений</th>
-                <th className="table-th">Режим</th>
-                <th className="table-th">Создан</th>
-                <th className="table-th text-right">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {userAccounts.map((a) => (
-                <tr key={a.id} className="table-row">
-                  <td className="table-td">
-                    {editing === a.id ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          autoFocus
-                          className="input"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              renameAccount(a.id, editName.trim() || a.name);
-                              setEditing(null);
-                            }
-                            if (e.key === 'Escape') setEditing(null);
-                          }}
-                        />
-                        <button
-                          className="btn-secondary"
-                          onClick={() => {
-                            renameAccount(a.id, editName.trim() || a.name);
-                            setEditing(null);
-                          }}
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-white">{a.name}</span>
-                        {a.id === currentId && <Badge tone="blue">Активный</Badge>}
-                        <button
-                          className="text-ink-500 hover:text-accent"
-                          onClick={() => {
-                            setEditing(a.id);
-                            setEditName(a.name);
-                          }}
-                          title="Переименовать"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="table-td">{a.items.length}</td>
-                  <td className="table-td">
-                    {a.integration.mode === 'demo' && <Badge tone="amber">Демо</Badge>}
-                    {a.integration.mode === 'csv' && <Badge tone="violet">CSV</Badge>}
-                    {a.integration.mode === 'api' && <Badge tone="green">API</Badge>}
-                  </td>
-                  <td className="table-td text-ink-400">
-                    {new Date(a.createdAt).toLocaleDateString('ru-RU')}
-                  </td>
-                  <td className="table-td text-right whitespace-nowrap">
-                    {a.id !== currentId && (
-                      <button
-                        className="btn-secondary mr-2"
-                        onClick={() => switchAccount(a.id)}
-                      >
-                        Сделать активным
-                      </button>
-                    )}
-                    {userAccounts.length > 1 && (
-                      <button
-                        className="btn-danger"
-                        onClick={() => {
-                          if (confirm(`Удалить аккаунт «${a.name}»? Все его данные будут стёрты.`)) {
-                            removeAccount(a.id);
-                          }
-                        }}
-                      >
-                        <Trash2 className="w-4 h-4" /> Удалить
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="card p-5 h-fit">
-          <h2 className="font-semibold text-white mb-3">Новый аккаунт</h2>
-          <p className="text-sm text-ink-300 mb-3">
-            Создайте отдельный аккаунт для каждого вашего профиля Авито или клиента —
-            данные между аккаунтами не пересекаются.
-          </p>
+      <div className="card p-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,420px)_auto] gap-4 lg:items-end">
+          <div>
+            <h2 className="font-semibold text-white mb-2">Новый аккаунт</h2>
+            <p className="text-sm text-ink-300">
+              Создайте отдельный аккаунт для каждого вашего профиля Авито или клиента — данные между аккаунтами не пересекаются.
+            </p>
+          </div>
           <input
-            className="input mb-2"
+            className="input"
             placeholder="Название аккаунта"
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || !draftName.trim()) return;
+              const id = createAccount(draftName.trim());
+              setDraftName('');
+              switchAccount(id);
+            }}
           />
           <button
-            className="btn-primary w-full"
+            className="btn-primary w-full lg:w-auto"
             onClick={() => {
               if (!draftName.trim()) return;
               const id = createAccount(draftName.trim());
