@@ -902,13 +902,13 @@ export const useStore = create<Store>((set, get) => {
       const acc = get().accounts[id];
       if (!acc || acc.integration.mode !== 'api') return;
       const uniqueIds = Array.from(new Set(itemIds.map(String).filter(Boolean)));
-      const missingIds = uniqueIds.filter((itemId) =>
-        acc.items.some((it) => String(it.id) === itemId && !it.imageUrl)
-      );
-      if (missingIds.length === 0) return;
+      const missingItems = acc.items
+        .filter((it) => uniqueIds.includes(String(it.id)) && !it.imageUrl)
+        .map((it) => ({ id: it.id, url: it.url }));
+      if (missingItems.length === 0) return;
 
       const scopedAdapter = new AvitoAdapter(acc.integration);
-      const images = await scopedAdapter.fetchItemImages(missingIds);
+      const images = await scopedAdapter.fetchItemImages(missingItems);
       if (images.size === 0) return;
 
       const accs = { ...get().accounts };

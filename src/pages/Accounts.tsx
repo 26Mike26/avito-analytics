@@ -1,8 +1,38 @@
-import { useState } from 'react';
-import { Check, Loader2, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  BarChart3,
+  Check,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Wifi,
+} from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
+import { PeriodPicker } from '../components/PeriodPicker';
 import { useStore, type AccountApiSyncResult } from '../store/useStore';
+import type { AccountData } from '../types';
+import {
+  calculateAccountStats,
+  formatNumber,
+  formatRub,
+  itemsInDateRange,
+  scaleKpiForPeriod,
+} from '../lib/analytics';
+
+type AccountStatsRow = {
+  account: AccountData;
+  spend: number;
+  leads: number;
+  averageCpl: number | null;
+  targetLeads: number;
+  targetCpl: number;
+  budget: number;
+  issues: string[];
+};
 
 export default function Accounts() {
   const accounts = useStore((s) => s.accounts);
@@ -13,6 +43,8 @@ export default function Accounts() {
   const removeAccount = useStore((s) => s.removeAccount);
   const switchAccount = useStore((s) => s.switchAccount);
   const syncAllApiAccounts = useStore((s) => s.syncAllApiAccounts);
+  const statsPeriod = useStore((s) => s.analyticsPeriod);
+  const setStatsPeriod = useStore((s) => s.setAnalyticsPeriod);
 
   const [draftName, setDraftName] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
@@ -20,11 +52,84 @@ export default function Accounts() {
   const [syncing, setSyncing] = useState(false);
   const [syncResults, setSyncResults] = useState<AccountApiSyncResult[]>([]);
 
+  const userAccounts = useMemo(
+    () =>
+      user
+        ? (user.accountIds
+            .map((id) => accounts[id])
+            .filter(Boolean) as AccountData[])
+        : [],
+    [accounts, user]
+  );
+
+  const apiAccounts = useMemo(
+    () => userAccounts.filter((a) => a.integration.mode === 'api'),
+    [userAccounts]
+  );
+
+  const accountStats = useMemo<AccountStatsRow[]>(
+    () =>
+      userAccounts.map((account) => {
+        const adsTotalFromSpendings = account.spendings
+          ? account.spendings.byDate
+              .filter((d) => d.date >= statsPeriod.from && d.date <= statsPeriod.to)
+              .reduce((sum, day) => sum + day.ads, 0)
+          : null;
+        const otherTotalInPeriod = account.spendings
+          ? account.spendings.byDate
+              .filter((d) => d.date >= statsPeriod.from && d.date <= statsPeriod.to)
+              .reduce((sum, day) => sum + Math.max(0, day.total - day.ads), 0)
+          : (account.accountCharges ?? [])
+              .filter((charge) => charge.date >= statsPeriod.from && charge.date <= statsPeriod.to)
+              .filter((charge) => charge.kind === 'account_other')
+              .reduce((sum, charge) => sum + charge.amount, 0);
+        const periodItems = itemsInDateRange(
+          account.items,
+          account.metrics,
+          statsPeriod.from,
+          statsPeriod.to,
+          account.accountCharges,
+          account.hasPerItemSpend,
+          adsTotalFromSpendings,
+          otherTotalInPeriod
+        );
+        const periodKpi = scaleKpiForPeriod(account.kpi, statsPeriod.from, statsPeriod.to);
+        const stats = calculateAccountStats(periodItems, periodKpi);
+        const issues: string[] = [];
+
+        if (stats.totalContacts < periodKpi.targetLeads) {
+          issues.push(
+            `лиды: ${formatNumber(stats.totalContacts)} из ${formatNumber(periodKpi.targetLeads)}`
+          );
+        }
+        if (stats.averageCpl == null) {
+          if (stats.totalSpend > 0 && stats.totalContacts === 0) {
+            issues.push(`CPL: нет лидов при расходе ${formatRub(stats.totalSpend)}`);
+          }
+        } else if (stats.averageCpl > account.kpi.targetCpl) {
+          issues.push(`CPL: ${formatRub(stats.averageCpl)} выше цели ${formatRub(account.kpi.targetCpl)}`);
+        }
+        if (periodKpi.monthlyBudget > 0 && stats.totalSpend > periodKpi.monthlyBudget) {
+          issues.push(
+            `бюджет: ${formatRub(stats.totalSpend)} из ${formatRub(periodKpi.monthlyBudget)}`
+          );
+        }
+
+        return {
+          account,
+          spend: stats.totalSpend,
+          leads: stats.totalContacts,
+          averageCpl: stats.averageCpl,
+          targetLeads: periodKpi.targetLeads,
+          targetCpl: account.kpi.targetCpl,
+          budget: periodKpi.monthlyBudget,
+          issues,
+        };
+      }),
+    [statsPeriod.from, statsPeriod.to, userAccounts]
+  );
+
   if (!user) return null;
-  const userAccounts = user.accountIds
-    .map((id) => accounts[id])
-    .filter(Boolean);
-  const apiAccounts = userAccounts.filter((a) => a.integration.mode === 'api');
 
   const runBulkSync = async () => {
     setSyncing(true);
@@ -101,6 +206,100 @@ export default function Accounts() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card p-4 sm:p-5 mb-6">
+        <div className="flex flex-col xl:flex-row xl:items-start gap-4 mb-4">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-300 flex items-center justify-center shrink-0">
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-white">Статистика аккаунтов за период</h2>
+              <p className="text-sm text-ink-400 mt-1">
+                Сводка пересчитывается автоматически после массового обновления API и показывает выполнение KPI каждого аккаунта.
+              </p>
+            </div>
+          </div>
+          <PeriodPicker value={statsPeriod} onChange={setStatsPeriod} className="xl:justify-end" />
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th className="table-th">Название аккаунта</th>
+                <th className="table-th text-right">Затраты</th>
+                <th className="table-th text-right">Лиды</th>
+                <th className="table-th text-right">Средний CPL</th>
+                <th className="table-th">KPI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accountStats.map((row) => {
+                const failed = row.issues.length > 0;
+                return (
+                  <tr
+                    key={row.account.id}
+                    className={[
+                      'table-row',
+                      failed ? 'bg-rose-500/5' : 'bg-emerald-500/0',
+                    ].join(' ')}
+                  >
+                    <td className="table-td">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-white">{row.account.name}</span>
+                        {row.account.id === currentId && <Badge tone="blue">Активный</Badge>}
+                        {row.account.integration.mode === 'api' && <Badge tone="green">API</Badge>}
+                      </div>
+                    </td>
+                    <td className="table-td text-right text-white font-semibold">
+                      {formatRub(row.spend)}
+                      {row.budget > 0 && (
+                        <div className="text-xs text-ink-500 font-normal">
+                          бюджет {formatRub(row.budget)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="table-td text-right">
+                      <span className={row.leads < row.targetLeads ? 'text-rose-300 font-semibold' : 'text-white font-semibold'}>
+                        {formatNumber(row.leads)}
+                      </span>
+                      <div className="text-xs text-ink-500">цель {formatNumber(row.targetLeads)}</div>
+                    </td>
+                    <td className="table-td text-right">
+                      <span
+                        className={
+                          row.averageCpl != null && row.averageCpl > row.targetCpl
+                            ? 'text-rose-300 font-semibold'
+                            : 'text-white font-semibold'
+                        }
+                      >
+                        {row.averageCpl != null ? formatRub(row.averageCpl) : '—'}
+                      </span>
+                      <div className="text-xs text-ink-500">цель {formatRub(row.targetCpl)}</div>
+                    </td>
+                    <td className="table-td min-w-[260px]">
+                      {failed ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-rose-300" />
+                            <Badge tone="red">Не выполняется</Badge>
+                          </div>
+                          <div className="text-xs text-rose-200/90 leading-relaxed">
+                            {row.issues.join('; ')}
+                          </div>
+                        </div>
+                      ) : (
+                        <Badge tone="green">В норме</Badge>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

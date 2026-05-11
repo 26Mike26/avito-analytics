@@ -150,6 +150,146 @@ async function avitoFetch(accountId, path, init = {}, retried = false) {
   return body;
 }
 
+
+function decodeHtmlEntities(value) {
+  return String(value ?? '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\\u002F/g, '/')
+    .replace(/\\\//g, '/');
+}
+
+function normalizeImageUrl(candidate, baseUrl) {
+  const cleaned = decodeHtmlEntities(candidate).trim();
+  if (!cleaned) return undefined;
+  try {
+    return new URL(cleaned, baseUrl).href;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractImageFromHtml(html, pageUrl) {
+  const patterns = [
+    /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["'][^>]*>/i,
+    /"image"\s*:\s*"([^"<]+)"/i,
+    /"images"\s*:\s*\[\s*"([^"<]+)"/i,
+    /(https?:\\?\/\\?\/[^"'<>\s]+\.(?:jpe?g|png|webp)(?:[^"'<>\s]*)?)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const url = match ? normalizeImageUrl(match[1], pageUrl) : undefined;
+    if (url) return url;
+  }
+  return undefined;
+}
+
+function findImageUrlInObject(value) {
+  const seen = new WeakSet();
+  const scan = (input, depth, imageHint = false) => {
+    if (depth > 8 || input == null) return undefined;
+    if (typeof input === 'string') {
+      const candidate = input.trim();
+      const isUrl = /^https?:\/\//i.test(candidate);
+      const hasImageExtension = /\.(jpe?g|png|webp)(\?|#|$)/i.test(candidate);
+      return isUrl && (imageHint || hasImageExtension) ? candidate : undefined;
+    }
+    if (typeof input !== 'object') return undefined;
+    if (seen.has(input)) return undefined;
+    seen.add(input);
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        const found = scan(item, depth + 1, imageHint);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const record = input;
+    for (const key of [
+      '_firstImageUrl',
+      'firstImageUrl',
+      'first_image_url',
+      'imageUrl',
+      'image_url',
+      'imageUrls',
+      'image_urls',
+      'preview',
+      'thumbnail',
+      'small',
+      'medium',
+      'large',
+      '140x105',
+      '640x480',
+      '1280x960',
+    ]) {
+      const found = scan(record[key], depth + 1, true);
+      if (found) return found;
+    }
+    for (const key of ['images', 'photos', 'photo', 'image', 'pictures', 'resources']) {
+      const found = scan(record[key], depth + 1, true);
+      if (found) return found;
+    }
+    if (imageHint) {
+      for (const [key, val] of Object.entries(record)) {
+        const keyLooksLikeImage = /image|photo|picture|preview|thumbnail|url/i.test(key) || /^\d+x\d+$/.test(key);
+        const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  return scan(value, 0);
+}
+
+function findAvitoItemUrl(value) {
+  const seen = new WeakSet();
+  const scan = (input, depth) => {
+    if (depth > 6 || input == null) return undefined;
+    if (typeof input === 'string') {
+      const candidate = input.trim();
+      return /^https?:\/\/(www\.)?avito\.ru\//i.test(candidate) ? candidate : undefined;
+    }
+    if (typeof input !== 'object') return undefined;
+    if (seen.has(input)) return undefined;
+    seen.add(input);
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        const found = scan(item, depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const record = input;
+    for (const key of ['url', 'itemUrl', 'item_url', 'link', 'uri']) {
+      const found = scan(record[key], depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return scan(value, 0);
+}
+
+async function fetchPublicItemImage(itemUrl) {
+  if (!itemUrl || !/^https?:\/\/(www\.)?avito\.ru\//i.test(itemUrl)) return undefined;
+  const res = await fetch(itemUrl, {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    },
+  });
+  if (!res.ok) return undefined;
+  const html = await res.text();
+  return extractImageFromHtml(html, itemUrl);
+}
+
 /** Маленький помощник: достаёт accountId из заголовка и оборачивает любые ошибки. */
 function withAcc(handler) {
   return async (req, res) => {
@@ -244,12 +384,24 @@ app.get('/api/items', withAcc(async (accountId, req, res) => {
 }));
 
 app.get('/api/items/:id', withAcc(async (accountId, req, res) => {
-  res.json(
-    await avitoFetch(
-      accountId,
-      `/core/v1/accounts/${accountId}/items/${req.params.id}/`
-    )
+  const detail = await avitoFetch(
+    accountId,
+    `/core/v1/accounts/${accountId}/items/${req.params.id}/`
   );
+  let imageUrl = findImageUrlInObject(detail);
+  if (!imageUrl) {
+    const publicUrl = typeof req.query.url === 'string' ? req.query.url : findAvitoItemUrl(detail);
+    try {
+      imageUrl = await fetchPublicItemImage(publicUrl);
+    } catch (e) {
+      console.warn('[items:image] public fallback failed:', e.message);
+    }
+  }
+  if (imageUrl && detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    res.json({ ...detail, _firstImageUrl: imageUrl });
+    return;
+  }
+  res.json(detail);
 }));
 
 // ─────────────────────────── Stats / Аналитика ───────────────────

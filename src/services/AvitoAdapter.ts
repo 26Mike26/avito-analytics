@@ -54,6 +54,9 @@ function findImageUrl(value: unknown): string | undefined {
 
     const record = input as Record<string, unknown>;
     for (const key of [
+      '_firstImageUrl',
+      'firstImageUrl',
+      'first_image_url',
       'imageUrl',
       'image_url',
       'imageUrls',
@@ -177,7 +180,7 @@ export type AvitoBalance = {
  */
 export interface IAvitoAdapter {
   fetchItems(): Promise<AvitoItem[]>;
-  fetchItemImages(itemIds: string[]): Promise<Map<string, string>>;
+  fetchItemImages(items: Array<string | Pick<AvitoItem, 'id' | 'url'>>): Promise<Map<string, string>>;
   fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]>;
   updateBid(itemId: string, newBid: number): Promise<void>;
   testConnection(): Promise<{ ok: boolean; message: string }>;
@@ -480,17 +483,30 @@ export class AvitoAdapter implements IAvitoAdapter {
     return generateMockItems();
   }
 
-  async fetchItemImages(itemIds: string[]): Promise<Map<string, string>> {
+  async fetchItemImages(
+    items: Array<string | Pick<AvitoItem, 'id' | 'url'>>
+  ): Promise<Map<string, string>> {
     const out = new Map<string, string>();
     if (this.settings.mode !== 'api') return out;
-    const uniqueIds = Array.from(new Set(itemIds.map(String).filter(Boolean)));
-    for (let i = 0; i < uniqueIds.length; i += 6) {
-      const slice = uniqueIds.slice(i, i + 6);
+    const targets = Array.from(
+      new Map(
+        items
+          .map((item) => {
+            const id = typeof item === 'string' ? item : String(item.id);
+            const url = typeof item === 'string' ? undefined : item.url;
+            return id ? [id, { id, url }] : null;
+          })
+          .filter(Boolean) as Array<[string, { id: string; url?: string }]>
+      ).values()
+    );
+    for (let i = 0; i < targets.length; i += 6) {
+      const slice = targets.slice(i, i + 6);
       await Promise.all(
-        slice.map(async (id) => {
+        slice.map(async ({ id, url }) => {
           try {
+            const qs = url ? `?url=${encodeURIComponent(url)}` : '';
             const detail = await proxyFetch<unknown>(
-              `/api/items/${encodeURIComponent(id)}`,
+              `/api/items/${encodeURIComponent(id)}${qs}`,
               this.headers()
             );
             const imageUrl = findImageUrl(detail);
