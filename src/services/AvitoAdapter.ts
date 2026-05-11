@@ -124,6 +124,15 @@ export type FilteredSpendingsByDate = Array<{
   total: number;
 }>;
 
+export type FilteredItemTotals = Array<{
+  itemId: string;
+  views: number;
+  impressions: number;
+  contacts: number;
+  favorites: number;
+  spend: number;
+}>;
+
 /** Баланс аккаунта в Авито. */
 export type AvitoBalance = {
   /** Реальный баланс (рубли, доступные на счёте). */
@@ -198,6 +207,15 @@ export interface IAvitoAdapter {
     dateTo: string;
     itemIds: number[];
   }): Promise<FilteredSpendingsByDate | null>;
+  /**
+   * Точные суммарные метрики для списка объявлений за период через /stats/v2.
+   * Используется для CTR и контактов в уточнении городов.
+   */
+  fetchItemTotals(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<FilteredItemTotals | null>;
   /**
    * Подтянуть текущие ставки CPx (цена за целевое действие) по объявлениям.
    * Возвращает Map<itemId → ставка_в_рублях>. В демо-режиме — пустая мапа.
@@ -814,7 +832,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           dateTo: opts.dateTo,
           grouping: 'day',
           spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
-          filter: { itemIds: opts.itemIds.slice(0, 200) },
+          filter: { itemIDs: opts.itemIds },
         }),
         headers: { 'Content-Type': 'application/json' },
       });
@@ -866,7 +884,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           dateTo: opts.dateTo,
           grouping: 'day',
           spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
-          filter: { itemIds: opts.itemIds.slice(0, 200) },
+          filter: { itemIDs: opts.itemIds },
         }),
         headers: { 'Content-Type': 'application/json' },
       });
@@ -884,6 +902,66 @@ export class AvitoAdapter implements IAvitoAdapter {
       });
     } catch (e) {
       console.info('[AvitoAdapter] fetchAdsForItemsByDate error:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Суммарные метрики по объявлениям за период. Нужны для точного CTR городов:
+   * CTR = views / impressions * 100, где impressions приходят только из stats v2.
+   */
+  async fetchItemTotals(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<FilteredItemTotals | null> {
+    if (this.settings.mode !== 'api') return null;
+    if (!PROXY_BASE) return null;
+    if (opts.itemIds.length === 0) return [];
+    try {
+      const data = await proxyFetch<{
+        result?: {
+          items?: Array<{
+            itemId?: number | string;
+            stats?: Array<{
+              views?: number;
+              impressions?: number;
+              contacts?: number;
+              favorites?: number;
+              spent?: number;
+            }>;
+          }>;
+        };
+        _v2_unavailable?: boolean;
+      }>('/api/stats/items/v2', {
+        method: 'POST',
+        ...this.headers(),
+        body: JSON.stringify({
+          dateFrom: opts.dateFrom,
+          dateTo: opts.dateTo,
+          itemIds: opts.itemIds,
+          grouping: 'item',
+          metrics: ['views', 'impressions', 'contacts', 'favorites', 'allSpending'],
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (data._v2_unavailable) return null;
+      const items = data.result?.items ?? [];
+      return items.map((row) => {
+        const totals = (row.stats ?? []).reduce(
+          (acc, stat) => ({
+            views: acc.views + Number(stat.views ?? 0),
+            impressions: acc.impressions + Number(stat.impressions ?? 0),
+            contacts: acc.contacts + Number(stat.contacts ?? 0),
+            favorites: acc.favorites + Number(stat.favorites ?? 0),
+            spend: acc.spend + Number(stat.spent ?? 0),
+          }),
+          { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
+        );
+        return { itemId: String(row.itemId), ...totals };
+      });
+    } catch (e) {
+      console.info('[AvitoAdapter] fetchItemTotals error:', e);
       return null;
     }
   }

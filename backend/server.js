@@ -293,28 +293,80 @@ function v2CacheKey(accountId, body) {
 // Не у всех тарифов работает. Если Avito возвращает 400/404/429/500 —
 // проксируем как HTTP 200 с {_v2_unavailable: true}, чтобы Network не светилась.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
-  const { dateFrom, dateTo, itemIds, fields } = req.body;
-  const realFields = fields ?? ['views', 'impressions', 'contacts', 'favorites', 'spent'];
-  const body = {
+  const { dateFrom, dateTo, itemIds, fields, metrics, grouping } = req.body;
+  const requestedMetrics = metrics ?? fields ?? ['views', 'impressions', 'contacts', 'favorites', 'allSpending'];
+  const legacyBody = {
     dateFrom,
     dateTo,
     itemIds: itemIds ?? [],
-    fields: realFields,
+    fields: requestedMetrics,
     periodGrouping: 'day',
   };
   // Проверяем кэш
-  const key = v2CacheKey(accountId, body);
+  const key = v2CacheKey(accountId, {
+    ...legacyBody,
+    grouping: grouping ?? '',
+    metrics: requestedMetrics,
+  });
   const cached = v2Cache.get(key);
   if (cached && Date.now() - cached.ts < V2_TTL_MS) {
     res.json(cached.data);
     return;
   }
   try {
-    const result = await avitoFetch(
-      accountId,
-      `/stats/v2/accounts/${accountId}/items`,
-      { method: 'POST', body: JSON.stringify(body) }
-    );
+    let result;
+
+    if (grouping === 'item' || metrics) {
+      const requestedItemIds = new Set((itemIds ?? []).map((id) => String(id)));
+      const allItems = [];
+      for (let offset = 0; offset < 5000; offset += 1000) {
+        const analyticsBody = {
+          dateFrom,
+          dateTo,
+          grouping: 'item',
+          metrics: requestedMetrics,
+          limit: 1000,
+          offset,
+        };
+        const page = await avitoFetch(
+          accountId,
+          `/stats/v2/accounts/${accountId}/items`,
+          { method: 'POST', body: JSON.stringify(analyticsBody) }
+        );
+        const groups = page.result?.groupings ?? [];
+        for (const group of groups) {
+          const id = String(group.id ?? '');
+          if (requestedItemIds.size > 0 && !requestedItemIds.has(id)) continue;
+          const bySlug = new Map((group.metrics ?? []).map((m) => [m.slug, Number(m.value ?? 0)]));
+          allItems.push({
+            itemId: id,
+            stats: [
+              {
+                date: dateTo,
+                views: bySlug.get('views') ?? 0,
+                impressions: bySlug.get('impressions') ?? 0,
+                contacts: bySlug.get('contacts') ?? 0,
+                favorites: bySlug.get('favorites') ?? 0,
+                spent:
+                  bySlug.get('allSpending') != null
+                    ? Number(bySlug.get('allSpending')) / 100
+                    : Number(bySlug.get('spent') ?? 0),
+              },
+            ],
+          });
+        }
+        const total = Number(page.result?.dataTotalCount ?? groups.length);
+        if (groups.length < 1000 || offset + groups.length >= total) break;
+      }
+      result = { result: { items: allItems } };
+    } else {
+      result = await avitoFetch(
+        accountId,
+        `/stats/v2/accounts/${accountId}/items`,
+        { method: 'POST', body: JSON.stringify(legacyBody) }
+      );
+    }
+
     v2Cache.set(key, { ts: Date.now(), data: result });
     // Не даём кэшу неограниченно расти — простая очистка
     if (v2Cache.size > 200) {
@@ -349,10 +401,18 @@ function sleep(ms) {
 }
 
 function alternateSpendingsFilter(filter) {
-  if (!filter || !Array.isArray(filter.itemIds)) return null;
-  const next = { ...filter, itemIDs: filter.itemIds };
-  delete next.itemIds;
-  return next;
+  if (!filter) return null;
+  if (Array.isArray(filter.itemIds)) {
+    const next = { ...filter, itemIDs: filter.itemIds };
+    delete next.itemIds;
+    return next;
+  }
+  if (Array.isArray(filter.itemIDs)) {
+    const next = { ...filter, itemIds: filter.itemIDs };
+    delete next.itemIDs;
+    return next;
+  }
+  return null;
 }
 
 app.post('/api/stats/spendings', withAcc(async (accountId, req, res) => {

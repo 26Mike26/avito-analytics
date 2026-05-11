@@ -34,6 +34,14 @@ import {
 } from '../lib/analytics';
 import { MapPin } from 'lucide-react';
 
+type PreciseCityStats = {
+  spend: number;
+  contacts: number;
+  views: number;
+  impressions: number;
+  favorites: number;
+};
+
 export default function Dashboard() {
   const allItems = useStore((s) => s.items);
   const metrics = useStore((s) => s.metrics);
@@ -51,17 +59,24 @@ export default function Dashboard() {
     () => scaleKpiForPeriod(kpi, period.from, period.to),
     [kpi, period.from, period.to]
   );
-  const [preciseItemSpend, setPreciseItemSpend] = useState<Map<string, number>>(new Map());
-  const [preciseItemsProgress, setPreciseItemsProgress] = useState({
+  const [preciseCityStats, setPreciseCityStats] = useState<Map<string, PreciseCityStats>>(new Map());
+  const [preciseCitiesProgress, setPreciseCitiesProgress] = useState({
     busy: false,
     done: 0,
     total: 0,
     nextEta: undefined as number | undefined,
+    error: undefined as string | undefined,
   });
 
   useEffect(() => {
-    setPreciseItemSpend(new Map());
-    setPreciseItemsProgress({ busy: false, done: 0, total: 0, nextEta: undefined });
+    setPreciseCityStats(new Map());
+    setPreciseCitiesProgress({
+      busy: false,
+      done: 0,
+      total: 0,
+      nextEta: undefined,
+      error: undefined,
+    });
   }, [currentAccountId, period.from, period.to]);
 
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
@@ -143,14 +158,7 @@ export default function Dashboard() {
       otherSpend,
     ]
   );
-  const items = useMemo(
-    () =>
-      periodItems.map((it) => {
-        const precise = preciseItemSpend.get(it.id);
-        return precise == null ? it : { ...it, spend: Math.round(precise) };
-      }),
-    [periodItems, preciseItemSpend]
-  );
+  const items = periodItems;
   const stats = calculateAccountStats(items, periodKpi);
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
@@ -168,58 +176,143 @@ export default function Dashboard() {
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 5);
 
-  const runPreciseIneffectiveItems = async () => {
-    if (preciseItemsProgress.busy) return;
-    const targets = [...items]
-      .filter((i) => classifyItem(i, kpi) === 'overspend' || classifyItem(i, kpi) === 'noLeads')
-      .filter((i) => preciseItemSpend.get(i.id) == null)
-      .map((i) => ({ item: i, id: Number(i.id) }))
-      .filter((x) => Number.isFinite(x.id) && x.id > 0)
-      .sort((a, b) => b.item.spend - a.item.spend)
-      .slice(0, 10);
-    if (targets.length === 0) return;
-    const next = new Map(preciseItemSpend);
-    setPreciseItemsProgress({ busy: true, done: 0, total: targets.length, nextEta: undefined });
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      const result = await adapter.fetchAdsForItems({
-        dateFrom: period.from,
-        dateTo: period.to,
-        itemIds: [target.id],
-      });
-      if (result) {
-        next.set(target.item.id, Math.round(result.total));
-        setPreciseItemSpend(new Map(next));
-      }
-      setPreciseItemsProgress({ busy: true, done: i + 1, total: targets.length, nextEta: undefined });
-      if (i < targets.length - 1) {
-        const eta = Date.now() + 65_000;
-        setPreciseItemsProgress((p) => ({ ...p, nextEta: eta }));
-        await new Promise((res) => setTimeout(res, 65_000));
-      }
-    }
-    setPreciseItemsProgress({ busy: false, done: targets.length, total: targets.length, nextEta: undefined });
-  };
-
   const todayRecs = recommendations
     .filter((r) => r.status === 'new')
     .slice(0, 6);
 
-  // Города с перерасходом (CPL > target). Сортируем по сумме расхода вниз,
-  // чтобы дорогие города были вверху.
+  // Города с перерасходом (CPL > target). Если город уточнён через Avito,
+  // подставляем реальные расходы и реальные показы/просмотры для CTR.
   const cityStats = useMemo(() => {
     const list = regionAverages(items);
     return list
-      .map((r) => ({
-        ...r,
-        overspend:
-          r.cpl != null && r.cpl > kpi.targetCpl
-            ? r.cpl - kpi.targetCpl
-            : 0,
-      }))
+      .map((r) => {
+        const precise = preciseCityStats.get(r.region);
+        const row = precise
+          ? {
+              ...r,
+              ...precise,
+              cpl: precise.contacts > 0 ? Math.round(precise.spend / precise.contacts) : null,
+              conversion:
+                precise.views > 0
+                  ? +((precise.contacts / precise.views) * 100).toFixed(1)
+                  : null,
+              ctr:
+                precise.impressions > 0
+                  ? +((precise.views / precise.impressions) * 100).toFixed(2)
+                  : null,
+              precise: true,
+            }
+          : { ...r, precise: false };
+        return {
+          ...row,
+          overspend:
+            row.cpl != null && row.cpl > kpi.targetCpl
+              ? row.cpl - kpi.targetCpl
+              : 0,
+        };
+      })
       .sort((a, b) => b.spend - a.spend);
-  }, [items, kpi]);
-  const overspendCities = cityStats.filter((c) => c.overspend > 0).slice(0, 5);
+  }, [items, kpi.targetCpl, preciseCityStats]);
+  const overspendCities = cityStats.filter((c) => c.overspend > 0);
+
+  const runPreciseIneffectiveCities = async () => {
+    if (preciseCitiesProgress.busy) return;
+    const targets = cityStats
+      .filter((city) => city.overspend > 0 || (city.spend > 0 && city.contacts === 0))
+      .filter((city) => !preciseCityStats.has(city.region))
+      .sort((a, b) => b.spend - a.spend)
+      .slice(0, 10);
+    if (targets.length === 0) return;
+
+    const idsByCity = new Map<string, number[]>();
+    for (const city of targets) {
+      const ids = periodItems
+        .filter((item) => item.region === city.region)
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (ids.length > 0) idsByCity.set(city.region, ids);
+    }
+    const allIds = Array.from(new Set(Array.from(idsByCity.values()).flat()));
+    if (allIds.length === 0) return;
+
+    setPreciseCitiesProgress({
+      busy: true,
+      done: 0,
+      total: targets.length,
+      nextEta: undefined,
+      error: undefined,
+    });
+
+    const apiMetrics = await adapter.fetchItemTotals({
+      dateFrom: period.from,
+      dateTo: period.to,
+      itemIds: allIds,
+    });
+    const metricsByItem = new Map((apiMetrics ?? []).map((row) => [String(row.itemId), row]));
+    const itemById = new Map(periodItems.map((item) => [String(item.id), item]));
+    const next = new Map(preciseCityStats);
+    let failed = 0;
+
+    for (let i = 0; i < targets.length; i++) {
+      const city = targets[i];
+      const ids = idsByCity.get(city.region) ?? [];
+      const metricTotals = ids.reduce(
+        (acc, id) => {
+          const key = String(id);
+          const api = metricsByItem.get(key);
+          const fallback = itemById.get(key);
+          const source = api ?? fallback;
+          if (!source) return acc;
+          return {
+            views: acc.views + Number(source.views ?? 0),
+            impressions: acc.impressions + Number(source.impressions ?? 0),
+            contacts: acc.contacts + Number(source.contacts ?? 0),
+            favorites: acc.favorites + Number(source.favorites ?? 0),
+          };
+        },
+        { views: 0, impressions: 0, contacts: 0, favorites: 0 }
+      );
+
+      const spend = await adapter.fetchAdsForItems({
+        dateFrom: period.from,
+        dateTo: period.to,
+        itemIds: ids,
+      });
+      if (spend) {
+        next.set(city.region, {
+          ...metricTotals,
+          spend: Math.round(spend.total),
+        });
+        setPreciseCityStats(new Map(next));
+      } else {
+        failed += 1;
+      }
+
+      setPreciseCitiesProgress({
+        busy: true,
+        done: i + 1,
+        total: targets.length,
+        nextEta: undefined,
+        error:
+          failed > 0
+            ? `Не удалось уточнить ${failed} из ${targets.length}; остальные города продолжаются.`
+            : undefined,
+      });
+      if (i < targets.length - 1) {
+        const eta = Date.now() + 65_000;
+        setPreciseCitiesProgress((p) => ({ ...p, nextEta: eta }));
+        await new Promise((resolve) => setTimeout(resolve, 65_000));
+      }
+    }
+
+    setPreciseCitiesProgress({
+      busy: false,
+      done: targets.length,
+      total: targets.length,
+      nextEta: undefined,
+      error: failed > 0 ? `Уточнено городов: ${targets.length - failed}. Не удалось: ${failed}.` : undefined,
+    });
+  };
 
   const balanceTotal = balance ? balance.real + balance.bonus : null;
 
@@ -545,9 +638,9 @@ export default function Dashboard() {
             )}
           </div>
           <PreciseItemsBar
-            preciseCount={preciseItemSpend.size}
-            progress={preciseItemsProgress}
-            onRun={runPreciseIneffectiveItems}
+            preciseCount={preciseCityStats.size}
+            progress={preciseCitiesProgress}
+            onRun={runPreciseIneffectiveCities}
           />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -567,7 +660,14 @@ export default function Dashboard() {
                   const isOverspend = c.overspend > 0;
                   return (
                     <tr key={c.region} className="table-row">
-                      <td className="table-td font-medium text-white">{c.region}</td>
+                      <td className="table-td font-medium text-white">
+                        {c.region}
+                        {c.precise && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wider text-emerald-500 font-bold">
+                            точно
+                          </span>
+                        )}
+                      </td>
                       <td className="table-td text-right">{formatRub(c.spend)}</td>
                       <td className="table-td text-right">
                         {formatNumber(c.contacts)}
@@ -662,7 +762,7 @@ function PreciseItemsBar({
   onRun,
 }: {
   preciseCount: number;
-  progress: { busy: boolean; done: number; total: number; nextEta?: number };
+  progress: { busy: boolean; done: number; total: number; nextEta?: number; error?: string };
   onRun: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
@@ -681,7 +781,7 @@ function PreciseItemsBar({
         onClick={onRun}
         disabled={progress.busy}
         className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
-        title="Точный расход по топ-10 неэффективных объявлений через Avito API. Ограничение Avito — примерно 1 запрос в минуту."
+        title="Точные расходы и метрики по топ-10 неэффективных городов через Avito API. Ограничение расходов Avito — примерно 1 запрос в минуту."
       >
         {progress.busy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -689,16 +789,18 @@ function PreciseItemsBar({
           <Wand2 className="w-3.5 h-3.5" />
         )}
         {progress.busy
-          ? `Уточняю объявления ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ``}`
+          ? `Уточняю города ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ``}`
           : preciseCount > 0
-          ? `Уточнить ещё (точных: ${preciseCount})`
-          : 'Уточнить топ-10 неэффективных'}
+          ? `Уточнить ещё (точных городов: ${preciseCount})`
+          : 'Уточнить топ-10 неэффективных городов'}
       </button>
-      {!progress.busy && preciseCount === 0 && (
+      {progress.error ? (
+        <span className="text-amber-600">{progress.error}</span>
+      ) : !progress.busy && preciseCount === 0 ? (
         <span className="text-ink-400">
-          После уточнения городская таблица пересчитается по реальному расходу объявлений.
+          После уточнения таблица пересчитается по реальным расходам, контактам, просмотрам и CTR из Avito.
         </span>
-      )}
+      ) : null}
     </div>
   );
 }
