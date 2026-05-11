@@ -96,20 +96,9 @@ type WorkReport = {
 const BID_TYPES: ActionType[] = ['item_bid_changed'];
 const BULK_BID_TYPES: ActionType[] = ['item_bid_bulk_applied'];
 const TOPUP_TYPES: ActionType[] = ['avito_balance_topup'];
-const ITEM_TYPES: ActionType[] = ['avito_item_published', 'avito_item_archived', 'avito_item_edited'];
+const PUBLISH_TYPES: ActionType[] = ['avito_item_published'];
+const ITEM_CHANGE_TYPES: ActionType[] = ['avito_item_archived', 'avito_item_edited'];
 const COMM_TYPES: ActionType[] = ['avito_message_received', 'avito_call_received', 'avito_review_received'];
-const PLATFORM_TYPES: ActionType[] = [
-  'kpi_changed',
-  'integration_updated',
-  'csv_imported',
-  'data_reloaded',
-  'reset_to_demo',
-  'recommendation_accepted',
-  'recommendation_declined',
-  'recommendation_postponed',
-  'item_note_set',
-];
-
 function inPeriod(entry: ActionLogEntry, period: PeriodValue) {
   const day = entry.timestamp.slice(0, 10);
   return day >= period.from && day <= period.to;
@@ -178,9 +167,9 @@ function buildWorkReport(entries: ActionLogEntry[], accountName: string, period:
   const charges = sorted.filter(
     (e) => e.type === 'avito_balance_charge' && !promotions.some((p) => p.id === e.id)
   );
-  const itemChanges = sorted.filter((e) => ITEM_TYPES.includes(e.type));
+  const itemPublishes = sorted.filter((e) => PUBLISH_TYPES.includes(e.type));
+  const itemChanges = sorted.filter((e) => ITEM_CHANGE_TYPES.includes(e.type));
   const communications = sorted.filter((e) => COMM_TYPES.includes(e.type));
-  const platformChanges = sorted.filter((e) => PLATFORM_TYPES.includes(e.type));
 
   const bidSummary = [
     bidChanges.length > 0 ? 'Ставку меняли ' + bidChanges.length + ' раз: ' + timeSummary(bidChanges) : '',
@@ -221,9 +210,16 @@ function buildWorkReport(entries: ActionLogEntry[], accountName: string, period:
       'amber'
     ),
     section(
+      'publishes',
+      'Выкладка объявлений',
+      'Новые объявления выложены ' + itemPublishes.length + ' раз: ' + timeSummary(itemPublishes),
+      itemPublishes,
+      'green'
+    ),
+    section(
       'items',
-      'Объявления',
-      'По объявлениям зафиксировано ' + itemChanges.length + ' изменений: ' + timeSummary(itemChanges),
+      'Изменения объявлений',
+      'Редактировали или меняли статус объявлений ' + itemChanges.length + ' раз: ' + timeSummary(itemChanges),
       itemChanges,
       'blue'
     ),
@@ -233,13 +229,6 @@ function buildWorkReport(entries: ActionLogEntry[], accountName: string, period:
       'Сообщения, звонки или отзывы: ' + communications.length + ' событий: ' + timeSummary(communications),
       communications,
       'blue'
-    ),
-    section(
-      'platform',
-      'Действия в платформе',
-      'Внутри платформы выполнено ' + platformChanges.length + ' действий: ' + timeSummary(platformChanges),
-      platformChanges,
-      'gray'
     ),
   ].filter(Boolean) as WorkReportSection[];
 
@@ -273,23 +262,13 @@ export default function ActionLog() {
 
   const [accountFilter, setAccountFilter] = useState<string>(currentId ?? 'all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [sourceFilter, setSourceFilter] = useState<'all' | ActionSource>('all');
   const [search, setSearch] = useState('');
   const [reportPeriod, setReportPeriod] = useState<PeriodValue>(() => lastNDaysRange(7));
 
-  const types = useMemo(() => Array.from(new Set(log.map((l) => l.type))), [log]);
-  const counts = useMemo(() => {
-    let platform = 0;
-    let avito = 0;
-    for (const e of log) {
-      if (e.source === 'avito') avito++;
-      else platform++;
-    }
-    return { platform, avito };
-  }, [log]);
+  const avitoLog = useMemo(() => log.filter((entry) => entry.source === 'avito'), [log]);
+  const types = useMemo(() => Array.from(new Set(avitoLog.map((l) => l.type))), [avitoLog]);
 
-  const filtered = log.filter((l) => {
-    if (sourceFilter !== 'all' && l.source !== sourceFilter) return false;
+  const filtered = avitoLog.filter((l) => {
     if (accountFilter !== 'all' && l.accountId !== accountFilter) return false;
     if (typeFilter !== 'all' && l.type !== typeFilter) return false;
     if (
@@ -303,11 +282,11 @@ export default function ActionLog() {
 
   const reportEntries = useMemo(
     () =>
-      log.filter((entry) => {
+      avitoLog.filter((entry) => {
         if (accountFilter !== 'all' && entry.accountId !== accountFilter) return false;
         return inPeriod(entry, reportPeriod);
       }),
-    [accountFilter, log, reportPeriod]
+    [accountFilter, avitoLog, reportPeriod]
   );
   const reportAccountName =
     accountFilter === 'all' ? 'все аккаунты' : accounts[accountFilter]?.name ?? 'аккаунт';
@@ -349,42 +328,19 @@ export default function ActionLog() {
   return (
     <Layout
       title="Журнал действий"
-      subtitle="Все изменения, разделённые на действия на платформе и события в самом Авито"
+      subtitle="События из аккаунта Авито: операции, продвижение, публикации, сообщения и изменения объявлений"
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <button
-          onClick={() => setSourceFilter('all')}
-          className={[
-            'card p-4 text-left transition',
-            sourceFilter === 'all' ? 'ring-2 ring-accent' : '',
-          ].join(' ')}
-        >
-          <div className="text-xs uppercase tracking-wider text-ink-400">Всего</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{log.length}</div>
-          <div className="text-[11px] text-ink-500 mt-1">события из всех источников</div>
-        </button>
-        <button
-          onClick={() => setSourceFilter('platform')}
-          className={[
-            'card p-4 text-left transition',
-            sourceFilter === 'platform' ? 'ring-2 ring-accent' : '',
-          ].join(' ')}
-        >
-          <div className="text-xs uppercase tracking-wider text-ink-400">Платформа</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{counts.platform}</div>
-          <div className="text-[11px] text-ink-500 mt-1">действия пользователей внутри сервиса</div>
-        </button>
-        <button
-          onClick={() => setSourceFilter('avito')}
-          className={[
-            'card p-4 text-left transition',
-            sourceFilter === 'avito' ? 'ring-2 ring-accent' : '',
-          ].join(' ')}
-        >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+        <div className="card p-4">
           <div className="text-xs uppercase tracking-wider text-ink-400">Авито</div>
-          <div className="text-2xl font-extrabold text-white mt-1">{counts.avito}</div>
-          <div className="text-[11px] text-ink-500 mt-1">события из аккаунта Авито (через API)</div>
-        </button>
+          <div className="text-2xl font-extrabold text-white mt-1">{avitoLog.length}</div>
+          <div className="text-[11px] text-ink-500 mt-1">только события из аккаунта Авито</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-xs uppercase tracking-wider text-ink-400">Отфильтровано</div>
+          <div className="text-2xl font-extrabold text-white mt-1">{filtered.length}</div>
+          <div className="text-[11px] text-ink-500 mt-1">с учётом аккаунта, типа и поиска</div>
+        </div>
       </div>
 
       <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
@@ -451,7 +407,7 @@ export default function ActionLog() {
             <div className="min-w-0">
               <h2 className="font-semibold text-white">Отчет по работе с аккаунтом</h2>
               <p className="text-sm text-ink-400 mt-1">
-                Краткая характеристика действий за период: ставки, пополнения, продвижение, изменения объявлений и обращения.
+                Краткая характеристика действий за период: ставки, пополнения, выкладка новых объявлений, изменения карточек, продвижение и обращения.
               </p>
               <div className="text-xs text-ink-500 mt-2">
                 Аккаунт: {report.accountName}. Найдено событий: {report.total}.
@@ -494,11 +450,8 @@ export default function ActionLog() {
       {filtered.length === 0 ? (
         <Empty
           title="Записей нет"
-          hint={
-            sourceFilter === 'avito'
-              ? 'Подключите аккаунт Авито или нажмите «Подтянуть из Авито» — здесь появятся пополнения баланса, входящие чаты и изменения объявлений.'
-              : 'Здесь появятся все действия — изменения KPI, ставок, импорты и переключения.'
-          }
+          hint="Подключите аккаунт Авито или нажмите «Подтянуть из Авито» — здесь появятся пополнения баланса, продвижение, входящие чаты и изменения объявлений. Действия внутри платформы здесь больше не показываются."
+        
         />
       ) : (
         <div className="card overflow-hidden">
