@@ -306,25 +306,34 @@ export function itemsInDateRange(
     0
   );
 
+  // ВАЖНО: если adsTotalInPeriod передан из /stats/v2/spendings — он уже
+  // включает И promotion (VAS), И presence (CPx). Поэтому НЕ прибавляем
+  // sum.spend (VAS из operations) — это даст двойной учёт.
+  // Если же используется fallback на CPx-аванс из operations — там только
+  // promotion-pool, и VAS из per-item operations отдельно — можно складывать.
+  const useSpendingsSource = adsTotalInPeriod != null && adsTotalInPeriod > 0;
+
   return normalizedItems.map((it) => {
     const sum = sumByItem.get(it.id);
     if (!sum) {
       return { ...it, views: 0, contacts: 0, favorites: 0, spend: 0 };
     }
-    // Распределяем CPx-пул пропорционально доле просмотров этого объявления.
-    // Это даёт приближение per-item расхода для CPx-тарифа без CSV-импорта.
+    // Распределяем общий пул пропорционально доле просмотров.
     const cpxShare =
       totalViewsInPeriod > 0 && cpxPoolInPeriod > 0
         ? (sum.views / totalViewsInPeriod) * cpxPoolInPeriod
         : 0;
+    // Если источник — точный spendings.ads, он уже содержит ВСЁ. Иначе
+    // прибавляем per-item VAS из operations (он не входит в CPx-пул).
+    const itemSpend = useSpendingsSource
+      ? cpxShare
+      : sum.spend + cpxShare;
     return {
       ...it,
       views: sum.views,
       contacts: sum.contacts,
       favorites: sum.favorites,
-      // К per-item расходу из operations_history (VAS типа XL) добавляем
-      // распределённую долю CPx-пула.
-      spend: Math.round(sum.spend + cpxShare),
+      spend: Math.round(itemSpend),
     };
   });
 }

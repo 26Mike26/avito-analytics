@@ -134,6 +134,14 @@ export interface IAvitoAdapter {
     dateTo: string;
   }): Promise<SpendingsBreakdown | null>;
   /**
+   * Точный расход для подмножества itemIDs (для уточнения по городам).
+   */
+  fetchAdsForItems(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<{ ads: number; total: number } | null>;
+  /**
    * Подтянуть текущие ставки CPx (цена за целевое действие) по объявлениям.
    * Возвращает Map<itemId → ставка_в_рублях>. В демо-режиме — пустая мапа.
    * Принимает массив itemIds (числовых) — для батчевого запроса getPromotionsByItemIds.
@@ -709,6 +717,59 @@ export class AvitoAdapter implements IAvitoAdapter {
     }
     if (opType.includes('резервирование')) return 'charge_account_other';
     return 'unknown';
+  }
+
+  /**
+   * Точная сумма расхода (ads = promotion + presence) для **подмножества itemIDs**.
+   * Используется для уточнения расхода по городам — за один запрос можно
+   * получить точную цифру для конкретного списка объявлений.
+   * Rate limit Avito: 1 запрос в минуту.
+   */
+  async fetchAdsForItems(opts: {
+    dateFrom: string;
+    dateTo: string;
+    itemIds: number[];
+  }): Promise<{ ads: number; total: number } | null> {
+    if (this.settings.mode !== 'api') return null;
+    if (!PROXY_BASE) return null;
+    if (opts.itemIds.length === 0) return { ads: 0, total: 0 };
+    try {
+      const data = await proxyFetch<{
+        result?: {
+          groupings?: Array<{
+            date: string;
+            spendings: Array<{ slug: string; value: number }>;
+          }>;
+        };
+        _spendings_unavailable?: boolean;
+      }>('/api/stats/spendings', {
+        method: 'POST',
+        ...this.headers(),
+        body: JSON.stringify({
+          dateFrom: opts.dateFrom,
+          dateTo: opts.dateTo,
+          grouping: 'day',
+          spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
+          filter: { itemIDs: opts.itemIds.slice(0, 200) },
+        }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (data._spendings_unavailable) return null;
+      const groups = data.result?.groupings ?? [];
+      let ads = 0;
+      let total = 0;
+      for (const g of groups) {
+        for (const s of g.spendings) {
+          const v = Number(s.value ?? 0);
+          total += v;
+          if (s.slug === 'promotion' || s.slug === 'presence') ads += v;
+        }
+      }
+      return { ads, total };
+    } catch (e) {
+      console.info('[AvitoAdapter] fetchAdsForItems error:', e);
+      return null;
+    }
   }
 
   /**
