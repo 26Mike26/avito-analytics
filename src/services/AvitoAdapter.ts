@@ -241,8 +241,8 @@ export class AvitoAdapter implements IAvitoAdapter {
             dateFrom,
             dateTo,
             itemIds: slice,
-            // Avito v2 enum: views(=показы), uniqViews(=уник.просмотры), contacts, favorites, spent.
-            fields: ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
+            // Avito stats v2: views = просмотры карточки, impressions = показы в выдаче.
+            fields: ['views', 'impressions', 'contacts', 'favorites', 'spent'],
             periodGrouping: 'day',
           }),
           headers: { 'Content-Type': 'application/json' },
@@ -260,7 +260,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           stats?: Array<{
             date: string;
             views?: number;
-            uniqViews?: number;
+            impressions?: number;
             contacts?: number;
             favorites?: number;
             spent?: number;
@@ -270,12 +270,11 @@ export class AvitoAdapter implements IAvitoAdapter {
           const id = String(row.itemId);
           for (const s of row.stats ?? []) {
             const spend = Number(s.spent ?? 0);
-            // Avito: views = показы, uniqViews = уник.просмотры карточки
             out.push({
               itemId: id,
               date: s.date,
-              views: Number(s.uniqViews ?? 0),
-              impressions: Number(s.views ?? 0),
+              views: Number(s.views ?? 0),
+              impressions: Number(s.impressions ?? 0),
               contacts: Number(s.contacts ?? 0),
               favorites: Number(s.favorites ?? 0),
               spend,
@@ -420,9 +419,9 @@ export class AvitoAdapter implements IAvitoAdapter {
                 dateFrom: fmt(past),
                 dateTo: fmt(today),
                 itemIds: slice,
-                // Avito API enum v1: views(=показы), uniqViews(=уник.просмотры карточки),
-                // contacts, uniqContacts, favorites, uniqFavorites. Поля «spent» в v1 нет.
-                fields: ['views', 'uniqViews', 'contacts', 'favorites'],
+                // Avito API v1 не отдаёт настоящие показы (impressions).
+                // Используем uniqViews как просмотры, CTR оставляем недоступным.
+                fields: ['uniqViews', 'contacts', 'favorites'],
                 periodGrouping: 'day',
               }),
               headers: { 'Content-Type': 'application/json' },
@@ -446,7 +445,7 @@ export class AvitoAdapter implements IAvitoAdapter {
                 itemId: id,
                 date: s.date,
                 views: Number(s.uniqViews ?? 0),
-                impressions: Number(s.views ?? 0),
+                impressions: undefined,
                 contacts: Number(s.contacts ?? 0),
                 favorites: Number(s.favorites ?? 0),
                 spend: Number(s.spent ?? 0),

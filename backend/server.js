@@ -267,8 +267,7 @@ app.post('/api/stats/items', withAcc(async (accountId, req, res) => {
           dateFrom,
           dateTo,
           itemIds: itemIds ?? [],
-          fields:
-            fields ?? ['views', 'uniqViews', 'contacts', 'favorites', 'spent'],
+          fields: fields ?? ['uniqViews', 'contacts', 'favorites'],
         }),
       }
     )
@@ -290,14 +289,12 @@ function v2CacheKey(accountId, body) {
   ].join('|');
 }
 
-// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход (поле spent).
+// /stats/v2 — новая версия: МОЖЕТ возвращать per-item расход и показы.
 // Не у всех тарифов работает. Если Avito возвращает 400/404/429/500 —
 // проксируем как HTTP 200 с {_v2_unavailable: true}, чтобы Network не светилась.
 app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo, itemIds, fields } = req.body;
-  // ВАЖНО: Avito v2 enum поля = uniqViews, contacts, favorites, spent.
-  // Поля «cost» НЕТ. Используем только spent.
-  const realFields = fields ?? ['uniqViews', 'contacts', 'favorites', 'spent'];
+  const realFields = fields ?? ['views', 'impressions', 'contacts', 'favorites', 'spent'];
   const body = {
     dateFrom,
     dateTo,

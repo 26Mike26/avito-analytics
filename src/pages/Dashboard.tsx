@@ -491,6 +491,7 @@ export default function Dashboard() {
                   <th className="table-th text-right">Расход</th>
                   <th className="table-th text-right">Контактов</th>
                   <th className="table-th text-right">CPL</th>
+                  <th className="table-th text-right">CTR</th>
                   <th className="table-th text-right">Конверсия</th>
                   <th className="table-th">Статус</th>
                 </tr>
@@ -511,6 +512,9 @@ export default function Dashboard() {
                         }`}
                       >
                         {c.cpl != null ? formatRub(c.cpl) : '—'}
+                      </td>
+                      <td className="table-td text-right">
+                        {c.ctr != null ? formatPercent(c.ctr) : '—'}
                       </td>
                       <td className="table-td text-right">
                         {c.conversion != null
