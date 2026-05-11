@@ -213,6 +213,7 @@ type Store = {
   applyAllBidRecommendations: (limitPercent: number) => number;
   setNote: (itemId: string, text: string) => void;
   updateIntegration: (s: Partial<IntegrationSettings>) => void;
+  ensureItemImages: (itemIds: string[]) => Promise<void>;
   reloadFromAdapter: () => Promise<void>;
   applyImportedData: (items: AvitoItem[], metrics: ItemMetrics[]) => void;
   resetToDemo: () => Promise<void>;
@@ -893,6 +894,44 @@ export const useStore = create<Store>((set, get) => {
         set({ ...buildMirror(acc), initialized: true });
         adapter.setSettings(acc.integration);
       }
+    },
+
+    ensureItemImages: async (itemIds) => {
+      const id = get().currentAccountId;
+      if (!id) return;
+      const acc = get().accounts[id];
+      if (!acc || acc.integration.mode !== 'api') return;
+      const uniqueIds = Array.from(new Set(itemIds.map(String).filter(Boolean)));
+      const missingIds = uniqueIds.filter((itemId) =>
+        acc.items.some((it) => String(it.id) === itemId && !it.imageUrl)
+      );
+      if (missingIds.length === 0) return;
+
+      const scopedAdapter = new AvitoAdapter(acc.integration);
+      const images = await scopedAdapter.fetchItemImages(missingIds);
+      if (images.size === 0) return;
+
+      const accs = { ...get().accounts };
+      const current = accs[id];
+      if (!current) return;
+      const updatedItems = current.items.map((it) => {
+        if (it.imageUrl) return it;
+        const imageUrl = images.get(String(it.id));
+        return imageUrl ? { ...it, imageUrl } : it;
+      });
+      const changed = updatedItems.some((it, index) => it.imageUrl !== current.items[index]?.imageUrl);
+      if (!changed) return;
+
+      const updated = { ...current, items: updatedItems };
+      accs[id] = updated;
+      saveAccounts(accs);
+      set({
+        accounts: accs,
+        ...(get().currentAccountId === id ? { items: updatedItems } : {}),
+      });
+      void repository.saveItems(id, updatedItems).catch((e) =>
+        console.warn('[supabase] ensureItemImages:', e)
+      );
     },
 
     setKpi: (k) => {

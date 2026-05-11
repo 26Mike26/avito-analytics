@@ -33,7 +33,7 @@ function findImageUrl(value: unknown): string | undefined {
   const seen = new WeakSet<object>();
 
   const scan = (input: unknown, depth: number, imageHint = false): string | undefined => {
-    if (depth > 5 || input == null) return undefined;
+    if (depth > 8 || input == null) return undefined;
     if (typeof input === 'string') {
       const candidate = input.trim();
       const isUrl = /^https?:\/\//i.test(candidate);
@@ -53,7 +53,20 @@ function findImageUrl(value: unknown): string | undefined {
     }
 
     const record = input as Record<string, unknown>;
-    for (const key of ['imageUrl', 'image_url', 'preview', 'thumbnail', '640x480']) {
+    for (const key of [
+      'imageUrl',
+      'image_url',
+      'imageUrls',
+      'image_urls',
+      'preview',
+      'thumbnail',
+      'small',
+      'medium',
+      'large',
+      '140x105',
+      '640x480',
+      '1280x960',
+    ]) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
     }
@@ -64,6 +77,14 @@ function findImageUrl(value: unknown): string | undefined {
     for (const key of ['images', 'photos', 'photo', 'image', 'pictures', 'resources']) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
+    }
+    if (imageHint) {
+      for (const [key, val] of Object.entries(record)) {
+        const keyLooksLikeImage =
+          /image|photo|picture|preview|thumbnail|url/i.test(key) || /^\d+x\d+$/.test(key);
+        const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
+        if (found) return found;
+      }
     }
     return undefined;
   };
@@ -156,6 +177,7 @@ export type AvitoBalance = {
  */
 export interface IAvitoAdapter {
   fetchItems(): Promise<AvitoItem[]>;
+  fetchItemImages(itemIds: string[]): Promise<Map<string, string>>;
   fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]>;
   updateBid(itemId: string, newBid: number): Promise<void>;
   testConnection(): Promise<{ ok: boolean; message: string }>;
@@ -456,6 +478,30 @@ export class AvitoAdapter implements IAvitoAdapter {
       }
     }
     return generateMockItems();
+  }
+
+  async fetchItemImages(itemIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (this.settings.mode !== 'api') return out;
+    const uniqueIds = Array.from(new Set(itemIds.map(String).filter(Boolean)));
+    for (let i = 0; i < uniqueIds.length; i += 6) {
+      const slice = uniqueIds.slice(i, i + 6);
+      await Promise.all(
+        slice.map(async (id) => {
+          try {
+            const detail = await proxyFetch<unknown>(
+              `/api/items/${encodeURIComponent(id)}`,
+              this.headers()
+            );
+            const imageUrl = findImageUrl(detail);
+            if (imageUrl) out.set(id, imageUrl);
+          } catch (e) {
+            console.warn(`[AvitoAdapter] fetchItemImages item=${id} failed:`, e);
+          }
+        })
+      );
+    }
+    return out;
   }
 
   async fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]> {

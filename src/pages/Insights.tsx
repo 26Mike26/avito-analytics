@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Lightbulb,
@@ -6,6 +6,7 @@ import {
   TrendingDown,
   AlertTriangle,
   Sparkles,
+  Image as ImageIcon,
   ListChecks,
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
@@ -37,6 +38,7 @@ export default function Insights() {
   const spendings = useStore((s) => s.spendings);
   const period = useStore((s) => s.analyticsPeriod);
   const kpi = useStore((s) => s.kpi);
+  const ensureItemImages = useStore((s) => s.ensureItemImages);
 
   const adsTotalFromSpendings = useMemo(() => {
     if (!spendings) return null;
@@ -84,8 +86,8 @@ export default function Insights() {
   );
 
   const scored = useMemo(() => scoreItems(items, kpi), [items, kpi]);
-  const successfulWithImages = useMemo(
-    () => scored.filter((score) => score.bucket === 'top' && score.item.imageUrl).slice(0, 6),
+  const successfulCandidates = useMemo(
+    () => scored.filter((score) => score.bucket === 'top').slice(0, 6),
     [scored]
   );
   const topSummary = useMemo(() => summarizeBucket(scored, 'top'), [scored]);
@@ -101,6 +103,26 @@ export default function Insights() {
   );
 
   const [bucket, setBucket] = useState<'top' | 'bottom' | 'all'>('all');
+  const [loadingImages, setLoadingImages] = useState(false);
+
+  useEffect(() => {
+    const missingIds = successfulCandidates
+      .filter((score) => !score.item.imageUrl)
+      .map((score) => score.item.id);
+    if (missingIds.length === 0) {
+      setLoadingImages(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingImages(true);
+    ensureItemImages(missingIds).finally(() => {
+      if (!cancelled) setLoadingImages(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureItemImages, successfulCandidates]);
 
   if (scored.length === 0) {
     return (
@@ -196,8 +218,8 @@ export default function Insights() {
         <ChecklistRecommendations recommendations={checklistRecommendations} />
       )}
 
-      {successfulWithImages.length > 0 && (
-        <SuccessfulImages items={successfulWithImages} />
+      {successfulCandidates.length > 0 && (
+        <SuccessfulImages items={successfulCandidates} loading={loadingImages} />
       )}
 
       {/* Слова */}
@@ -331,7 +353,7 @@ export default function Insights() {
   );
 }
 
-function SuccessfulImages({ items }: { items: ItemScore[] }) {
+function SuccessfulImages({ items, loading }: { items: ItemScore[]; loading: boolean }) {
   return (
     <div className="card p-4 sm:p-5 mb-6">
       <div className="flex items-center gap-2 mb-4">
@@ -346,12 +368,21 @@ function SuccessfulImages({ items }: { items: ItemScore[] }) {
             className="group rounded-xl border border-ink-700 bg-ink-900/50 overflow-hidden hover:border-emerald-500/50 transition-colors"
           >
             <div className="aspect-[4/3] bg-ink-800 overflow-hidden">
-              <img
-                src={item.imageUrl}
-                alt={item.title}
-                loading="lazy"
-                className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
-              />
+              {item.imageUrl ? (
+                <img
+                  src={item.imageUrl}
+                  alt={item.title}
+                  loading="lazy"
+                  className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
+                />
+              ) : (
+                <div className="h-full w-full flex flex-col items-center justify-center gap-2 text-ink-500 bg-ink-900">
+                  <ImageIcon className="w-6 h-6" />
+                  <span className="text-xs text-center px-2">
+                    {loading ? 'Загружаем фото' : 'Фото не найдено'}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="p-3">
               <div className="text-sm text-white font-medium line-clamp-2 min-h-10">
