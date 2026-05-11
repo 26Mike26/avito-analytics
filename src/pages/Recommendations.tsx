@@ -43,6 +43,15 @@ export default function Recommendations() {
       title="Рекомендации"
       subtitle="Приоритизированный список действий, чтобы быстрее достигать KPI"
     >
+      <div className="pill-nav mb-4">
+        <Link to="/recommendations" className="pill-nav-item active">
+          Рекомендации
+        </Link>
+        <Link to="/insights" className="pill-nav-item">
+          Инсайты
+        </Link>
+      </div>
+
       <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
         <div className="pill-nav">
           {(

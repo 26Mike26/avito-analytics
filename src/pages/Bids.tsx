@@ -43,6 +43,15 @@ export default function Bids() {
       title="Управление ставками"
       subtitle="Массовая работа со ставками и прогноз изменений"
     >
+      <div className="pill-nav mb-4">
+        <Link to="/items" className="pill-nav-item">
+          Объявления
+        </Link>
+        <Link to="/bids" className="pill-nav-item active">
+          Управление ставками
+        </Link>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div className="card p-4">
           <div className="text-xs text-ink-400">Объявлений в работе</div>

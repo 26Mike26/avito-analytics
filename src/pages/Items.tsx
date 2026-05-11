@@ -173,6 +173,15 @@ export default function Items() {
       title="Объявления"
       subtitle={`Найдено ${filtered.length} из ${items.length}. Период: ${period.from} — ${period.to}.`}
     >
+      <div className="pill-nav mb-4">
+        <Link to="/items" className="pill-nav-item active">
+          Объявления
+        </Link>
+        <Link to="/bids" className="pill-nav-item">
+          Управление ставками
+        </Link>
+      </div>
+
       {/* Подсказка: на CPx-тарифе расход распределён по просмотрам. */}
       {promotionPoolSpend > 0 && (
         <div className="card border border-blue-500/30 bg-blue-500/5 p-3 mb-4 text-sm flex flex-wrap items-start gap-3">

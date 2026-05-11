@@ -1,28 +1,29 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Target,
   ListChecks,
-  TrendingUp,
   Lightbulb,
   BarChart3,
   Settings,
   Users,
   History,
   GitCompare,
-  Sparkles,
   X,
 } from 'lucide-react';
 
-const items = [
+const items: Array<{
+  to: string;
+  icon: typeof LayoutDashboard;
+  label: string;
+  aliases?: string[];
+}> = [
   { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
   { to: '/kpi', icon: Target, label: 'KPI-центр' },
-  { to: '/items', icon: ListChecks, label: 'Объявления' },
-  { to: '/bids', icon: TrendingUp, label: 'Управление ставками' },
-  { to: '/recommendations', icon: Lightbulb, label: 'Рекомендации' },
   { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
   { to: '/compare', icon: GitCompare, label: 'Сравнение периодов' },
-  { to: '/insights', icon: Sparkles, label: 'Инсайты по объявлениям' },
+  { to: '/items', icon: ListChecks, label: 'Объявления и ставки', aliases: ['/bids'] },
+  { to: '/recommendations', icon: Lightbulb, label: 'Рекомендации и инсайты', aliases: ['/insights'] },
   { to: '/accounts', icon: Users, label: 'Аккаунты' },
   { to: '/log', icon: History, label: 'Журнал действий' },
   { to: '/settings', icon: Settings, label: 'Настройки' },
@@ -35,6 +36,8 @@ export function Sidebar({
   open?: boolean;
   onClose?: () => void;
 }) {
+  const location = useLocation();
+
   return (
     <>
       {/* Затемнение под drawer на мобильной */}
@@ -84,26 +87,40 @@ export function Sidebar({
               to={item.to}
               end={item.to === '/'}
               onClick={onClose}
-              className={({ isActive }) =>
-                [
+              className={({ isActive }) => {
+                const active =
+                  isActive ||
+                  item.aliases?.some(
+                    (alias) =>
+                      location.pathname === alias || location.pathname.startsWith(`${alias}/`)
+                  );
+                return [
                   'flex items-center gap-3 px-3 py-3 rounded-xl text-sm transition relative group',
-                  isActive
+                  active
                     ? 'bg-ink-800 text-white'
                     : 'text-ink-300 hover:bg-ink-850 hover:text-white',
-                ].join(' ')
-              }
+                ].join(' ');
+              }}
             >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent rounded-full" />
-                  )}
-                  <item.icon
-                    className={`w-4 h-4 ${isActive ? 'text-accent' : 'text-ink-400 group-hover:text-ink-200'}`}
-                  />
-                  {item.label}
-                </>
-              )}
+              {({ isActive }) => {
+                const active =
+                  isActive ||
+                  item.aliases?.some(
+                    (alias) =>
+                      location.pathname === alias || location.pathname.startsWith(`${alias}/`)
+                  );
+                return (
+                  <>
+                    {active && (
+                      <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent rounded-full" />
+                    )}
+                    <item.icon
+                      className={`w-4 h-4 ${active ? 'text-accent' : 'text-ink-400 group-hover:text-ink-200'}`}
+                    />
+                    {item.label}
+                  </>
+                );
+              }}
             </NavLink>
           ))}
         </nav>

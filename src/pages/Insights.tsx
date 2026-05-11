@@ -129,6 +129,15 @@ export default function Insights() {
       title="Инсайты по объявлениям"
       subtitle={`Что общего у успешных объявлений и где провисают неудачные за период ${period.from} — ${period.to}`}
     >
+      <div className="pill-nav mb-4">
+        <Link to="/recommendations" className="pill-nav-item">
+          Рекомендации
+        </Link>
+        <Link to="/insights" className="pill-nav-item active">
+          Инсайты
+        </Link>
+      </div>
+
       {/* Сравнение бакетов */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <BucketCard
