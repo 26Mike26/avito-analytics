@@ -112,6 +112,10 @@ function createDemoAccount(ownerId: string, name: string, seed = 0): AccountData
     notes: {},
     recommendations: recs,
     createdAt: new Date().toISOString(),
+    balance: null,
+    accountCharges: [],
+    hasPerItemSpend: false,
+    spendings: null,
   };
 }
 
@@ -268,6 +272,10 @@ function buildMirror(acc: AccountData) {
     notes: acc.notes,
     integration: acc.integration,
     kpi: acc.kpi,
+    balance: acc.balance ?? null,
+    accountCharges: acc.accountCharges ?? [],
+    hasPerItemSpend: acc.hasPerItemSpend ?? false,
+    spendings: acc.spendings ?? null,
   };
 }
 
@@ -299,6 +307,11 @@ export const useStore = create<Store>((set, get) => {
     spendings: null,
 
     bootstrap: async () => {
+      const current = get();
+      if (current.initialized && current.session && current.currentUser) {
+        return;
+      }
+
       // ─── Supabase режим ───
       if (SUPABASE_ENABLED) {
         const user = await authService.getCurrentUser();
@@ -309,7 +322,17 @@ export const useStore = create<Store>((set, get) => {
         const session: Session = { userId: user.id, startedAt: new Date().toISOString() };
         const remoteAccounts = await repository.loadUserAccounts(user.id);
         let accs: Record<string, AccountData> = {};
-        for (const a of remoteAccounts) accs[a.id] = a;
+        const cachedAccounts = loadAccounts();
+        for (const a of remoteAccounts) {
+          const cached = cachedAccounts[a.id];
+          accs[a.id] = {
+            ...a,
+            balance: cached?.balance ?? a.balance ?? null,
+            accountCharges: cached?.accountCharges ?? a.accountCharges ?? [],
+            hasPerItemSpend: cached?.hasPerItemSpend ?? a.hasPerItemSpend ?? false,
+            spendings: cached?.spendings ?? a.spendings ?? null,
+          };
+        }
         let accountIds = remoteAccounts.map((a) => a.id);
 
         if (accountIds.length === 0) {
@@ -322,8 +345,14 @@ export const useStore = create<Store>((set, get) => {
           accountIds = [demo.id];
         }
         const remoteLog = await repository.loadActionLog(user.id).catch(() => []);
-        const activeId = accountIds[0];
+        const persistedActive = loadActiveId();
+        const activeId =
+          persistedActive && accountIds.includes(persistedActive)
+            ? persistedActive
+            : accountIds[0];
         const acc = accs[activeId];
+        saveActiveId(activeId);
+        saveAccounts(accs);
         set({
           session,
           currentUser: { ...user, accountIds },
@@ -536,7 +565,18 @@ export const useStore = create<Store>((set, get) => {
         accounts: accs,
         currentUser: updatedUser,
         currentAccountId: activeId,
-        ...(next ? buildMirror(next) : { items: [], metrics: [], recommendations: [], bidHistory: [] }),
+        ...(next
+          ? buildMirror(next)
+          : {
+              items: [],
+              metrics: [],
+              recommendations: [],
+              bidHistory: [],
+              balance: null,
+              accountCharges: [],
+              hasPerItemSpend: false,
+              spendings: null,
+            }),
       });
       if (next) adapter.setSettings(next.integration);
       void repository.deleteAccount(id).catch((e) =>
@@ -551,31 +591,52 @@ export const useStore = create<Store>((set, get) => {
       const acc = get().accounts[id];
       if (!acc) return;
       saveActiveId(id);
-      // Сбрасываем balance/charges от предыдущего аккаунта — иначе будут
-      // показаны цифры старого аккаунта до прихода свежих данных.
       set({
         currentAccountId: id,
         ...buildMirror(acc),
         initialized: true,
-        balance: null,
-        accountCharges: [],
       });
       adapter.setSettings(acc.integration);
       get().log('account_switched', `Переключение на аккаунт «${acc.name}»`);
-      // Асинхронно подтягиваем баланс и общие расходы для нового аккаунта.
-      // (Только в режиме API — иначе вернётся null/[].)
+      // Фоново освежаем runtime-данные, но старый кеш аккаунта остаётся на экране.
       void (async () => {
+        const scopedAdapter = new AvitoAdapter(acc.integration);
+        const patchRuntime = (patch: Partial<AccountData>) => {
+          const currentAccs = get().accounts;
+          const target = currentAccs[id];
+          if (!target) return;
+          const nextAcc = { ...target, ...patch };
+          const nextAccs = { ...currentAccs, [id]: nextAcc };
+          saveAccounts(nextAccs);
+          set({
+            accounts: nextAccs,
+            ...(get().currentAccountId === id ? buildMirror(nextAcc) : {}),
+          });
+        };
         try {
-          const balance = await adapter.fetchBalance();
-          if (balance) set({ balance });
+          const balance = await scopedAdapter.fetchBalance();
+          if (balance) patchRuntime({ balance });
         } catch (e) {
           console.warn('[adapter] balance refresh on switch failed:', e);
         }
         try {
-          const charges = await adapter.fetchAccountCharges();
-          set({ accountCharges: charges });
+          const charges = await scopedAdapter.fetchAccountCharges();
+          patchRuntime({ accountCharges: charges });
         } catch (e) {
           console.warn('[adapter] charges refresh on switch failed:', e);
+        }
+        try {
+          const today = new Date();
+          const past = new Date(today);
+          past.setDate(today.getDate() - 30);
+          const fmt = (d: Date) => d.toISOString().slice(0, 10);
+          const spendings = await scopedAdapter.fetchSpendings({
+            dateFrom: fmt(past),
+            dateTo: fmt(today),
+          });
+          if (spendings) patchRuntime({ spendings });
+        } catch (e) {
+          console.warn('[adapter] spendings refresh on switch failed:', e);
         }
       })();
     },
@@ -861,18 +922,21 @@ export const useStore = create<Store>((set, get) => {
     reloadFromAdapter: async () => {
       const id = get().currentAccountId;
       if (!id) return;
+      const accAtStart = get().accounts[id];
+      if (!accAtStart) return;
+      const scopedAdapter = new AvitoAdapter(accAtStart.integration);
       set({ loading: true });
       // Запоминаем предыдущий снимок объявлений — будем сравнивать после fetch
       // и логировать изменения как события Авито (новые/снятые/изменённые).
-      const prevItems = get().items;
-      const items = await adapter.fetchItems();
+      const prevItems = accAtStart.items;
+      const items = await scopedAdapter.fetchItems();
       // Подтянуть ставки CPx и наложить на items.currentBid.
       // Передаём список числовых ID для батчевого запроса getPromotionsByItemIds.
       try {
         const numericIds = items
           .map((i) => Number(i.id))
           .filter((n) => Number.isFinite(n) && n > 0);
-        const bids = await adapter.fetchBids(numericIds);
+        const bids = await scopedAdapter.fetchBids(numericIds);
         if (bids.size > 0) {
           for (const it of items) {
             const b = bids.get(String(it.id));
@@ -882,14 +946,16 @@ export const useStore = create<Store>((set, get) => {
       } catch (e) {
         console.warn('[adapter] fetchBids failed:', e);
       }
-      const metrics = await adapter.fetchMetrics(items);
+      const metrics = await scopedAdapter.fetchMetrics(items);
       // Запоминаем — пришёл ли per-item spend из v2. Это переключает UI:
       // если да, не распределяем CPx-аванс повторно по показам.
-      set({ hasPerItemSpend: !!adapter.lastMetricsHadV2Spend });
+      const nextHasPerItemSpend = !!scopedAdapter.lastMetricsHadV2Spend;
       // Подтягиваем «события из Авито» (история операций, входящие сообщения и т.п.)
       try {
-        const events = await adapter.fetchAvitoEvents();
-        if (events.length > 0) get().ingestAvitoEvents(events);
+        const events = await scopedAdapter.fetchAvitoEvents();
+        if (events.length > 0) {
+          get().ingestAvitoEvents(events.map((ev) => ({ ...ev, accountId: id })));
+        }
       } catch (e) {
         console.warn('[adapter] fetchAvitoEvents failed:', e);
       }
@@ -898,41 +964,49 @@ export const useStore = create<Store>((set, get) => {
       try {
         if (prevItems.length > 0) {
           const diffEvents = diffItemsToEvents(prevItems, items);
-          if (diffEvents.length > 0) get().ingestAvitoEvents(diffEvents);
+          if (diffEvents.length > 0) {
+            get().ingestAvitoEvents(diffEvents.map((ev) => ({ ...ev, accountId: id })));
+          }
         }
       } catch (e) {
         console.warn('[adapter] diffItemsToEvents failed:', e);
       }
       // Баланс кошелька (real + bonus + CPA-аванс).
+      let nextBalance = accAtStart.balance ?? null;
       try {
-        const balance = await adapter.fetchBalance();
-        if (balance) set({ balance });
+        const balance = await scopedAdapter.fetchBalance();
+        if (balance) nextBalance = balance;
       } catch (e) {
         console.warn('[adapter] fetchBalance failed:', e);
       }
       // Общие расходы аккаунта (рассылки и т.п. без привязки к объявлению).
+      let nextAccountCharges = accAtStart.accountCharges ?? [];
       try {
-        const charges = await adapter.fetchAccountCharges();
-        set({ accountCharges: charges });
+        nextAccountCharges = await scopedAdapter.fetchAccountCharges();
       } catch (e) {
         console.warn('[adapter] fetchAccountCharges failed:', e);
       }
       // Точные расходы профиля (Avito Pro Статистика → Расходы).
+      let nextSpendings = accAtStart.spendings ?? null;
       try {
         const today = new Date();
         const past = new Date(today);
         past.setDate(today.getDate() - 30);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        const sp = await adapter.fetchSpendings({
+        const sp = await scopedAdapter.fetchSpendings({
           dateFrom: fmt(past),
           dateTo: fmt(today),
         });
-        if (sp) set({ spendings: sp });
+        if (sp) nextSpendings = sp;
       } catch (e) {
         console.warn('[adapter] fetchSpendings failed:', e);
       }
       const accs = { ...get().accounts };
       const acc = accs[id];
+      if (!acc) {
+        set({ loading: false });
+        return;
+      }
       // Обогащаем items суммами из metrics — иначе таблица объявлений
       // показывает нули даже если статистика реально пришла.
       const enrichedItems = items.map((it) => {
@@ -963,16 +1037,18 @@ export const useStore = create<Store>((set, get) => {
         metrics,
         recommendations: recs,
         integration: { ...acc.integration, lastSyncAt: new Date().toISOString() },
+        balance: nextBalance,
+        accountCharges: nextAccountCharges,
+        hasPerItemSpend: nextHasPerItemSpend,
+        spendings: nextSpendings,
       };
       accs[id] = updated;
       saveAccounts(accs);
+      const isStillActive = get().currentAccountId === id;
       set({
         accounts: accs,
-        items: itemsWithRec,
-        metrics,
-        recommendations: recs,
         loading: false,
-        integration: updated.integration,
+        ...(isStillActive ? buildMirror(updated) : {}),
       });
       void (async () => {
         try {
@@ -1025,6 +1101,9 @@ export const useStore = create<Store>((set, get) => {
           mode: 'csv',
           lastSyncAt: new Date().toISOString(),
         },
+        accountCharges: [],
+        hasPerItemSpend: true,
+        spendings: null,
       };
       accs[id] = updated;
       saveAccounts(accs);
@@ -1034,6 +1113,9 @@ export const useStore = create<Store>((set, get) => {
         metrics,
         recommendations: recs,
         integration: updated.integration,
+        accountCharges: [],
+        hasPerItemSpend: true,
+        spendings: null,
       });
       void (async () => {
         try {
@@ -1067,6 +1149,10 @@ export const useStore = create<Store>((set, get) => {
         items: itemsWithRec,
         metrics,
         recommendations: recs,
+        balance: null,
+        accountCharges: [],
+        hasPerItemSpend: false,
+        spendings: null,
       };
       accs[id] = updated;
       saveAccounts(accs);
@@ -1076,6 +1162,10 @@ export const useStore = create<Store>((set, get) => {
         metrics,
         recommendations: recs,
         integration: updated.integration,
+        balance: null,
+        accountCharges: [],
+        hasPerItemSpend: false,
+        spendings: null,
         loading: false,
       });
       void (async () => {

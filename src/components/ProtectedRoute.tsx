@@ -5,12 +5,23 @@ import { useStore } from '../store/useStore';
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const session = useStore((s) => s.session);
   const bootstrap = useStore((s) => s.bootstrap);
+  const initialized = useStore((s) => s.initialized);
   const location = useLocation();
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(() => initialized || !!session);
 
   useEffect(() => {
-    bootstrap().finally(() => setReady(true));
-  }, [bootstrap]);
+    if (initialized || session) {
+      setReady(true);
+      return;
+    }
+    let alive = true;
+    bootstrap().finally(() => {
+      if (alive) setReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [bootstrap, initialized, session]);
 
   if (!ready) {
     return (

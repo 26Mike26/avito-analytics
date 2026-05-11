@@ -125,6 +125,37 @@ export type AccountData = {
   notes: Record<string, string>;
   recommendations: Recommendation[];
   createdAt: string;
+  /** Последний загруженный баланс аккаунта. Хранится как кеш, чтобы не обнулять UI при навигации. */
+  balance?: {
+    real: number;
+    bonus: number;
+    advance: number;
+    fetchedAt: string;
+  } | null;
+  /** Последние общие расходы аккаунта без привязки к объявлениям. */
+  accountCharges?: Array<{
+    date: string;
+    amount: number;
+    description: string;
+    kind: 'promotion_pool' | 'account_other' | 'refund';
+  }>;
+  /** Флаг, что per-item spend уже пришёл из Avito stats v2. */
+  hasPerItemSpend?: boolean;
+  /** Последняя разбивка расходов профиля из Avito Pro статистики. */
+  spendings?: {
+    promotion: number;
+    presence: number;
+    commission: number;
+    rest: number;
+    total: number;
+    byDate: Array<{
+      date: string;
+      promotion: number;
+      presence: number;
+      ads: number;
+      total: number;
+    }>;
+  } | null;
 };
 
 export type ActionType =
