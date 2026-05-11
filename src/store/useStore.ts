@@ -42,6 +42,14 @@ const ANALYTICS_PERIOD_KEY = 'avito-app-analytics-period';
 
 type ReportPeriod = { from: string; to: string };
 
+export type AccountApiSyncResult = {
+  accountId: string;
+  accountName: string;
+  status: 'success' | 'skipped' | 'error';
+  message: string;
+  items?: number;
+};
+
 function genId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
@@ -192,6 +200,7 @@ type Store = {
   renameAccount: (id: string, name: string) => void;
   removeAccount: (id: string) => void;
   switchAccount: (id: string) => void;
+  syncAllApiAccounts: () => Promise<AccountApiSyncResult[]>;
 
   // ───── KPI / данные / рекомендации (текущий аккаунт)
   init: () => Promise<void>;
@@ -302,6 +311,29 @@ function buildMirror(acc: AccountData) {
     hasPerItemSpend: acc.hasPerItemSpend ?? false,
     spendings: acc.spendings ?? null,
   };
+}
+
+function enrichItemsFromMetrics(items: AvitoItem[], metrics: ItemMetrics[]): AvitoItem[] {
+  return items.map((it) => {
+    const itemMetrics = metrics.filter((m) => m.itemId === it.id);
+    if (itemMetrics.length === 0) return it;
+    const sum = itemMetrics.reduce(
+      (acc, m) => ({
+        views: acc.views + m.views,
+        contacts: acc.contacts + m.contacts,
+        favorites: acc.favorites + m.favorites,
+        spend: acc.spend + m.spend,
+      }),
+      { views: 0, contacts: 0, favorites: 0, spend: 0 }
+    );
+    return {
+      ...it,
+      views: it.views || sum.views,
+      contacts: it.contacts || sum.contacts,
+      favorites: it.favorites || sum.favorites,
+      spend: it.spend || sum.spend,
+    };
+  });
 }
 
 export const useStore = create<Store>((set, get) => {
@@ -675,6 +707,179 @@ export const useStore = create<Store>((set, get) => {
           console.warn('[adapter] spendings refresh on switch failed:', e);
         }
       })();
+    },
+
+    syncAllApiAccounts: async () => {
+      const user = get().currentUser;
+      if (!user) return [];
+      const results: AccountApiSyncResult[] = [];
+      const apiAccountIds = user.accountIds.filter((id) => {
+        const acc = get().accounts[id];
+        return acc?.integration.mode === 'api';
+      });
+
+      if (apiAccountIds.length === 0) {
+        return user.accountIds
+          .map((id) => get().accounts[id])
+          .filter(Boolean)
+          .map((acc) => ({
+            accountId: acc.id,
+            accountName: acc.name,
+            status: 'skipped' as const,
+            message: 'Аккаунт не в режиме API.',
+          }));
+      }
+
+      set({ loading: true });
+
+      for (const id of apiAccountIds) {
+        const accAtStart = get().accounts[id];
+        if (!accAtStart) continue;
+        const scopedAdapter = new AvitoAdapter(accAtStart.integration);
+
+        try {
+          const test = await scopedAdapter.testConnection();
+          if (!test.ok) {
+            results.push({
+              accountId: id,
+              accountName: accAtStart.name,
+              status: 'error',
+              message: test.message,
+            });
+            continue;
+          }
+
+          const prevItems = accAtStart.items;
+          const items = await scopedAdapter.fetchItems();
+
+          try {
+            const numericIds = items
+              .map((i) => Number(i.id))
+              .filter((n) => Number.isFinite(n) && n > 0);
+            const bids = await scopedAdapter.fetchBids(numericIds);
+            if (bids.size > 0) {
+              for (const it of items) {
+                const b = bids.get(String(it.id));
+                if (b && b > 0) it.currentBid = b;
+              }
+            }
+          } catch (e) {
+            console.warn('[adapter] bulk fetchBids failed:', e);
+          }
+
+          const metrics = await scopedAdapter.fetchMetrics(items);
+          const nextHasPerItemSpend = !!scopedAdapter.lastMetricsHadV2Spend;
+
+          try {
+            const events = await scopedAdapter.fetchAvitoEvents();
+            if (events.length > 0) {
+              get().ingestAvitoEvents(events.map((ev) => ({ ...ev, accountId: id })));
+            }
+          } catch (e) {
+            console.warn('[adapter] bulk fetchAvitoEvents failed:', e);
+          }
+
+          try {
+            if (prevItems.length > 0) {
+              const diffEvents = diffItemsToEvents(prevItems, items);
+              if (diffEvents.length > 0) {
+                get().ingestAvitoEvents(diffEvents.map((ev) => ({ ...ev, accountId: id })));
+              }
+            }
+          } catch (e) {
+            console.warn('[adapter] bulk diffItemsToEvents failed:', e);
+          }
+
+          let nextBalance = accAtStart.balance ?? null;
+          try {
+            const balance = await scopedAdapter.fetchBalance();
+            if (balance) nextBalance = balance;
+          } catch (e) {
+            console.warn('[adapter] bulk fetchBalance failed:', e);
+          }
+
+          let nextAccountCharges = accAtStart.accountCharges ?? [];
+          try {
+            nextAccountCharges = await scopedAdapter.fetchAccountCharges();
+          } catch (e) {
+            console.warn('[adapter] bulk fetchAccountCharges failed:', e);
+          }
+
+          let nextSpendings = accAtStart.spendings ?? null;
+          try {
+            const today = new Date();
+            const past = new Date(today);
+            past.setDate(today.getDate() - 30);
+            const fmt = (d: Date) => d.toISOString().slice(0, 10);
+            const sp = await scopedAdapter.fetchSpendings({
+              dateFrom: fmt(past),
+              dateTo: fmt(today),
+            });
+            if (sp) nextSpendings = sp;
+          } catch (e) {
+            console.warn('[adapter] bulk fetchSpendings failed:', e);
+          }
+
+          const currentAccs = get().accounts;
+          const acc = currentAccs[id];
+          if (!acc) continue;
+          const enrichedItems = enrichItemsFromMetrics(items, metrics);
+          const itemsWithRec = applyBidRecommendationsToItems(enrichedItems, acc.kpi, metrics);
+          const recs = buildRecommendations(itemsWithRec, acc.kpi, metrics);
+          const updated: AccountData = {
+            ...acc,
+            items: itemsWithRec,
+            metrics,
+            recommendations: recs,
+            integration: { ...acc.integration, lastSyncAt: new Date().toISOString() },
+            balance: nextBalance,
+            accountCharges: nextAccountCharges,
+            hasPerItemSpend: nextHasPerItemSpend,
+            spendings: nextSpendings,
+          };
+          const nextAccs = { ...currentAccs, [id]: updated };
+          saveAccounts(nextAccs);
+          set({
+            accounts: nextAccs,
+            ...(get().currentAccountId === id ? buildMirror(updated) : {}),
+          });
+
+          void (async () => {
+            try {
+              await repository.saveItems(id, itemsWithRec);
+              await repository.saveMetrics(id, metrics);
+              await repository.saveIntegration(id, updated.integration);
+              await repository.saveAccountCache(id, updated);
+            } catch (e) {
+              console.warn('[supabase] syncAllApiAccounts:', e);
+            }
+          })();
+
+          results.push({
+            accountId: id,
+            accountName: updated.name,
+            status: 'success',
+            message: 'Подключение работает, данные обновлены.',
+            items: itemsWithRec.length,
+          });
+        } catch (e) {
+          results.push({
+            accountId: id,
+            accountName: accAtStart.name,
+            status: 'error',
+            message: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      set({ loading: false });
+      const ok = results.filter((r) => r.status === 'success').length;
+      const bad = results.filter((r) => r.status === 'error').length;
+      get().log(
+        'data_reloaded',
+        `Массовая синхронизация API-аккаунтов: успешно ${ok}, ошибок ${bad}`
+      );
+      return results;
     },
 
     init: async () => {
