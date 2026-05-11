@@ -14,6 +14,11 @@ import { SUPABASE_ENABLED, supabase } from './supabase';
  * (текущее поведение), Supabase-реализация пишет в Postgres через RLS.
  */
 
+type AccountCacheData = Pick<
+  AccountData,
+  'balance' | 'accountCharges' | 'hasPerItemSpend' | 'spendings'
+>;
+
 export interface IRepository {
   loadUserAccounts(userId: string): Promise<AccountData[]>;
   saveAccount(acc: AccountData): Promise<void>;
@@ -25,6 +30,7 @@ export interface IRepository {
   saveNote(accountId: string, itemId: string, text: string): Promise<void>;
   saveKpi(accountId: string, kpi: AccountKpi): Promise<void>;
   saveIntegration(accountId: string, integration: IntegrationSettings): Promise<void>;
+  saveAccountCache(accountId: string, cache: AccountCacheData): Promise<void>;
 
   saveActionLog(entry: ActionLogEntry): Promise<void>;
   loadActionLog(userId: string): Promise<ActionLogEntry[]>;
@@ -49,8 +55,13 @@ class SupabaseRepository implements IRepository {
 
     const accIds = accs.map((a) => a.id);
 
-    const [{ data: items }, { data: metrics }, { data: bidHist }, { data: notes }] =
-      await Promise.all([
+    const [
+      { data: items },
+      { data: metrics },
+      { data: bidHist },
+      { data: notes },
+      { data: cacheRows },
+    ] = await Promise.all([
         this.sb.from('items').select('*').in('account_id', accIds),
         this.sb.from('metrics').select('*').in('account_id', accIds),
         this.sb
@@ -59,45 +70,65 @@ class SupabaseRepository implements IRepository {
           .in('account_id', accIds)
           .order('created_at', { ascending: false }),
         this.sb.from('notes').select('*').in('account_id', accIds),
+        this.sb.from('account_cache').select('*').in('account_id', accIds),
       ]);
+    const cacheByAccount = new Map(
+      (cacheRows ?? []).map((row) => [row.account_id, row])
+    );
 
-    return accs.map((a) => ({
-      id: a.id,
-      ownerId: a.owner_id,
-      name: a.name,
-      createdAt: a.created_at,
-      kpi: a.kpi as AccountKpi,
-      integration: {
-        mode: a.integration_mode,
-        userId: a.integration_user_id ?? '',
-        clientId: a.integration_client_id ?? '',
-        clientSecret: a.integration_client_secret ?? '',
-        accessToken: a.integration_access_token ?? '',
-        lastSyncAt: a.last_sync_at ?? undefined,
-      },
-      items: (items ?? [])
-        .filter((i) => i.account_id === a.id)
-        .map((i) => i.data as AvitoItem),
-      metrics: (metrics ?? [])
-        .filter((m) => m.account_id === a.id)
-        .map((m) => m.data as ItemMetrics),
-      bidHistory: (bidHist ?? [])
-        .filter((h) => h.account_id === a.id)
-        .map((h) => ({
-          id: h.id,
-          itemId: h.item_id,
-          oldBid: Number(h.old_bid),
-          newBid: Number(h.new_bid),
-          reason: h.reason ?? '',
-          date: h.created_at,
-        })),
-      notes: Object.fromEntries(
-        (notes ?? [])
-          .filter((n) => n.account_id === a.id)
-          .map((n) => [n.item_id, n.text])
-      ),
-      recommendations: [], // вычисляются на клиенте
-    }));
+    return accs.map((a) => {
+      const cache = cacheByAccount.get(a.id);
+      return {
+        id: a.id,
+        ownerId: a.owner_id,
+        name: a.name,
+        createdAt: a.created_at,
+        kpi: a.kpi as AccountKpi,
+        integration: {
+          mode: a.integration_mode,
+          userId: a.integration_user_id ?? '',
+          clientId: a.integration_client_id ?? '',
+          clientSecret: a.integration_client_secret ?? '',
+          accessToken: a.integration_access_token ?? '',
+          lastSyncAt: a.last_sync_at ?? undefined,
+        },
+        items: (items ?? [])
+          .filter((i) => i.account_id === a.id)
+          .map((i) => i.data as AvitoItem),
+        metrics: (metrics ?? [])
+          .filter((m) => m.account_id === a.id)
+          .map((m) => m.data as ItemMetrics),
+        bidHistory: (bidHist ?? [])
+          .filter((h) => h.account_id === a.id)
+          .map((h) => ({
+            id: h.id,
+            itemId: h.item_id,
+            oldBid: Number(h.old_bid),
+            newBid: Number(h.new_bid),
+            reason: h.reason ?? '',
+            date: h.created_at,
+          })),
+        notes: Object.fromEntries(
+          (notes ?? [])
+            .filter((n) => n.account_id === a.id)
+            .map((n) => [n.item_id, n.text])
+        ),
+        recommendations: [], // вычисляются на клиенте
+        balance: cache
+          ? (cache.balance as AccountData['balance'] | undefined) ?? null
+          : undefined,
+        accountCharges: cache
+          ? (cache.account_charges as AccountData['accountCharges'] | undefined) ??
+            []
+          : undefined,
+        hasPerItemSpend: cache
+          ? Boolean(cache.has_per_item_spend)
+          : undefined,
+        spendings: cache
+          ? (cache.spendings as AccountData['spendings'] | undefined) ?? null
+          : undefined,
+      };
+    });
   }
 
   async saveAccount(acc: AccountData): Promise<void> {
@@ -199,6 +230,26 @@ class SupabaseRepository implements IRepository {
     if (error) throw error;
   }
 
+  async saveAccountCache(
+    accountId: string,
+    cache: AccountCacheData
+  ): Promise<void> {
+    const { error } = await this.sb.from('account_cache').upsert({
+      account_id: accountId,
+      balance: cache.balance ?? null,
+      account_charges: cache.accountCharges ?? [],
+      has_per_item_spend: !!cache.hasPerItemSpend,
+      spendings: cache.spendings ?? null,
+      meta: {
+        savedAt: new Date().toISOString(),
+      },
+      updated_at: new Date().toISOString(),
+    });
+    if (error) {
+      console.warn('[supabase] account_cache upsert error', error.message);
+    }
+  }
+
   async saveActionLog(entry: ActionLogEntry): Promise<void> {
     const { error } = await this.sb.from('action_log').insert({
       id: entry.id,
@@ -259,6 +310,7 @@ class LocalRepository implements IRepository {
   async saveNote() {}
   async saveKpi() {}
   async saveIntegration() {}
+  async saveAccountCache() {}
   async saveActionLog() {}
   async loadActionLog() {
     return [];

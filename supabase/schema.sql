@@ -91,6 +91,18 @@ create table if not exists public.action_log (
 create index if not exists action_log_user_idx
   on public.action_log(user_id, created_at desc);
 
+create table if not exists public.account_cache (
+  account_id uuid primary key references public.accounts(id) on delete cascade,
+  balance jsonb,
+  account_charges jsonb not null default '[]'::jsonb,
+  has_per_item_spend boolean not null default false,
+  spendings jsonb,
+  meta jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+create index if not exists account_cache_updated_idx
+  on public.account_cache(updated_at desc);
+
 -- ─── Миграция для существующих БД (можно прогонять повторно) ───
 -- Если таблица уже создана без поля source, добавим колонку без падения.
 alter table public.action_log
@@ -105,6 +117,7 @@ alter table public.metrics enable row level security;
 alter table public.bid_history enable row level security;
 alter table public.notes enable row level security;
 alter table public.action_log enable row level security;
+alter table public.account_cache enable row level security;
 
 -- accounts: пользователь видит/изменяет только свои аккаунты
 drop policy if exists "accounts owners only" on public.accounts;
@@ -152,6 +165,14 @@ create policy "action_log owner only" on public.action_log
   for all
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
+
+drop policy if exists "account_cache via account" on public.account_cache;
+create policy "account_cache via account" on public.account_cache
+  for all
+  using (exists (select 1 from public.accounts a
+                 where a.id = account_cache.account_id and a.owner_id = auth.uid()))
+  with check (exists (select 1 from public.accounts a
+                      where a.id = account_cache.account_id and a.owner_id = auth.uid()));
 
 -- ─────────────────────────── ПОДСКАЗКА ───────────────────────
 -- После применения: Supabase → Authentication → Sign Up users в UI.

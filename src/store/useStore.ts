@@ -327,10 +327,10 @@ export const useStore = create<Store>((set, get) => {
           const cached = cachedAccounts[a.id];
           accs[a.id] = {
             ...a,
-            balance: cached?.balance ?? a.balance ?? null,
-            accountCharges: cached?.accountCharges ?? a.accountCharges ?? [],
-            hasPerItemSpend: cached?.hasPerItemSpend ?? a.hasPerItemSpend ?? false,
-            spendings: cached?.spendings ?? a.spendings ?? null,
+            balance: a.balance ?? cached?.balance ?? null,
+            accountCharges: a.accountCharges ?? cached?.accountCharges ?? [],
+            hasPerItemSpend: a.hasPerItemSpend ?? cached?.hasPerItemSpend ?? false,
+            spendings: a.spendings ?? cached?.spendings ?? null,
           };
         }
         let accountIds = remoteAccounts.map((a) => a.id);
@@ -341,6 +341,7 @@ export const useStore = create<Store>((set, get) => {
           await repository.saveAccount(demo);
           await repository.saveItems(demo.id, demo.items);
           await repository.saveMetrics(demo.id, demo.metrics);
+          await repository.saveAccountCache(demo.id, demo);
           accs = { [demo.id]: demo };
           accountIds = [demo.id];
         }
@@ -515,6 +516,7 @@ export const useStore = create<Store>((set, get) => {
           await repository.saveAccount(acc);
           await repository.saveItems(acc.id, acc.items);
           await repository.saveMetrics(acc.id, acc.metrics);
+          await repository.saveAccountCache(acc.id, acc);
         } catch (e) {
           console.warn('[supabase] createAccount persist failed:', e);
         }
@@ -612,6 +614,9 @@ export const useStore = create<Store>((set, get) => {
             accounts: nextAccs,
             ...(get().currentAccountId === id ? buildMirror(nextAcc) : {}),
           });
+          void repository.saveAccountCache(id, nextAcc).catch((e) =>
+            console.warn('[supabase] saveAccountCache on switch:', e)
+          );
         };
         try {
           const balance = await scopedAdapter.fetchBalance();
@@ -1055,6 +1060,7 @@ export const useStore = create<Store>((set, get) => {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
           await repository.saveIntegration(id, updated.integration);
+          await repository.saveAccountCache(id, updated);
         } catch (e) {
           console.warn('[supabase] reloadFromAdapter:', e);
         }
@@ -1122,6 +1128,7 @@ export const useStore = create<Store>((set, get) => {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
           await repository.saveIntegration(id, updated.integration);
+          await repository.saveAccountCache(id, updated);
         } catch (e) {
           console.warn('[supabase] applyImportedData:', e);
         }
@@ -1173,6 +1180,7 @@ export const useStore = create<Store>((set, get) => {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
           await repository.saveIntegration(id, updated.integration);
+          await repository.saveAccountCache(id, updated);
         } catch (e) {
           console.warn('[supabase] resetToDemo:', e);
         }
