@@ -26,8 +26,27 @@ import {
   formatRub,
   itemsInDateRange,
   regionAverages,
+  scaleKpiForPeriod,
+  subcategoryName,
 } from '../lib/analytics';
 import { ProgressBar } from '../components/ProgressBar';
+
+function loadPreciseCityCache(key: string): Map<string, number> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    return new Map(
+      Object.entries(parsed).filter(([, value]) => Number.isFinite(Number(value)))
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function savePreciseCityCache(key: string, values: Map<string, number>) {
+  localStorage.setItem(key, JSON.stringify(Object.fromEntries(values)));
+}
 
 export default function Analytics() {
   const allItems = useStore((s) => s.items);
@@ -36,16 +55,26 @@ export default function Analytics() {
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
   const kpi = useStore((s) => s.kpi);
+  const currentAccountId = useStore((s) => s.currentAccountId);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
+  const periodKpi = useMemo(
+    () => scaleKpiForPeriod(kpi, period.from, period.to),
+    [kpi, period.from, period.to]
+  );
 
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
   const adapter = useStore((s) => s.adapter);
 
-  // Точный расход по городам (через /stats/v2/spendings filter.itemIDs).
-  // Map<city, ads> — заполняется по запросу пользователя кнопкой.
+  // Точный расход по городам (через /stats/v2/spendings filter.itemIds).
+  // Map<city, total> — сохраняется в кеше, чтобы не сбрасываться при навигации.
+  const preciseCityCacheKey = useMemo(
+    () =>
+      `avito-precise-city:${currentAccountId ?? 'demo'}:${period.from}:${period.to}:${category}:${region}:${status}`,
+    [currentAccountId, period.from, period.to, category, region, status]
+  );
   const [preciseCity, setPreciseCity] = useState<Map<string, number>>(new Map());
   const [preciseProgress, setPreciseProgress] = useState<{
     busy: boolean;
@@ -53,6 +82,11 @@ export default function Analytics() {
     total: number;
     nextEta?: number;
   }>({ busy: false, done: 0, total: 0 });
+
+  useEffect(() => {
+    setPreciseCity(loadPreciseCityCache(preciseCityCacheKey));
+    setPreciseProgress({ busy: false, done: 0, total: 0 });
+  }, [preciseCityCacheKey]);
 
   const adsTotalFromSpendings = useMemo(() => {
     if (!spendings) return null;
@@ -102,7 +136,7 @@ export default function Analytics() {
   );
 
   const categoriesList = useMemo(
-    () => Array.from(new Set(itemsForPeriod.map((i) => i.category))).sort(),
+    () => Array.from(new Set(itemsForPeriod.map((i) => subcategoryName(i.category)))).sort(),
     [itemsForPeriod]
   );
   const regionsList = useMemo(
@@ -111,7 +145,7 @@ export default function Analytics() {
   );
 
   const filteredItems = itemsForPeriod.filter((i) => {
-    if (category !== 'all' && i.category !== category) return false;
+    if (category !== 'all' && subcategoryName(i.category) !== category) return false;
     if (region !== 'all' && i.region !== region) return false;
     if (status !== 'all' && i.status !== status) return false;
     return true;
@@ -250,7 +284,7 @@ export default function Analytics() {
     });
   }, [filteredMetrics, adsByDate, otherByDate, spendings]);
 
-  const stats = calculateAccountStats(filteredItems, kpi);
+  const stats = calculateAccountStats(filteredItems, periodKpi);
 
   const catAvg = categoryAverages(filteredItems);
   const catData = Array.from(catAvg.entries()).map(([name, v]) => ({
@@ -261,20 +295,21 @@ export default function Analytics() {
   }));
   const regData = regionAverages(filteredItems).sort((a, b) => b.spend - a.spend);
   /**
-   * Запускает точный расчёт расхода по топ-N городам через filter.itemIDs.
+   * Запускает точный расчёт расхода по всем городам через filter.itemIds.
    * Avito rate limit /stats/v2/spendings = 1 запрос/мин, поэтому последовательно
    * с задержкой 65 сек между городами.
    */
-  const runPreciseCityCalc = async (topN = 5) => {
+  const runPreciseCityCalc = async () => {
     if (preciseProgress.busy) return;
-    // Берём топ-N городов по расходу из текущего распределения
-    const top = [...regData].sort((a, b) => b.spend - a.spend).slice(0, topN);
-    const total = top.length;
+    const targets = [...regData]
+      .filter((r) => !preciseCity.has(r.region))
+      .sort((a, b) => b.spend - a.spend);
+    const total = targets.length;
     if (total === 0) return;
     setPreciseProgress({ busy: true, done: 0, total });
     const newMap = new Map(preciseCity);
-    for (let i = 0; i < top.length; i++) {
-      const city = top[i];
+    for (let i = 0; i < targets.length; i++) {
+      const city = targets[i];
       // Собираем itemIds, которые в этом городе
       const itemIdsForCity = filteredItems
         .filter((it) => it.region === city.region)
@@ -289,11 +324,13 @@ export default function Analytics() {
         dateTo: period.to,
         itemIds: itemIdsForCity,
       });
-      if (r) newMap.set(city.region, r.ads);
-      setPreciseCity(new Map(newMap));
+      if (r) newMap.set(city.region, Math.round(r.total));
+      const snapshot = new Map(newMap);
+      setPreciseCity(snapshot);
+      savePreciseCityCache(preciseCityCacheKey, snapshot);
       setPreciseProgress({ busy: true, done: i + 1, total });
       // Между запросами задержка 65 сек (rate limit 1/мин), кроме последнего
-      if (i < top.length - 1) {
+      if (i < targets.length - 1) {
         const eta = Date.now() + 65_000;
         setPreciseProgress((p) => ({ ...p, nextEta: eta }));
         await new Promise((res) => setTimeout(res, 65_000));
@@ -368,7 +405,7 @@ export default function Analytics() {
         <PeriodPicker value={period} onChange={setPeriod} className="mb-3" />
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
           <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="all">Все категории</option>
+            <option value="all">Все подкатегории</option>
             {categoriesList.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -443,7 +480,7 @@ export default function Analytics() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <Card title="Выполнение KPI">
-          <KpiBar label="Лиды" value={stats.leadsProgress} note={`${formatNumber(stats.totalContacts)} / ${formatNumber(kpi.targetLeads)}`} />
+          <KpiBar label="Лиды" value={stats.leadsProgress} note={`${formatNumber(stats.totalContacts)} / ${formatNumber(periodKpi.targetLeads)}`} />
           <KpiBar
             label="CPL"
             value={stats.cplProgress ?? 0}
@@ -462,13 +499,13 @@ export default function Analytics() {
                 : 'Нет данных'
             }
           />
-          <KpiBar label="Бюджет" value={stats.budgetUsage} note={`${formatRub(stats.totalSpend)} / ${formatRub(kpi.monthlyBudget)}`} />
+          <KpiBar label="Бюджет периода" value={stats.budgetUsage} note={`${formatRub(stats.totalSpend)} / ${formatRub(periodKpi.monthlyBudget)}`} />
         </Card>
         <Card title="Неэффективные города (CPL выше цели)">
           <PreciseCalcBar
             preciseCount={preciseCity.size}
             progress={preciseProgress}
-            onRun={() => runPreciseCityCalc(5)}
+            onRun={runPreciseCityCalc}
           />
           {ineffectiveCities.length === 0 ? (
             <div className="text-sm text-ink-400">
@@ -508,7 +545,7 @@ export default function Analytics() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <Card title="Эффективность по категориям">
+        <Card title="Эффективность по подкатегориям">
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={catData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#262630" />
@@ -640,9 +677,9 @@ function CityRow({
 }
 
 /**
- * Кнопка-баннер запуска точного расчёта расхода по топ-городам.
+ * Кнопка-баннер запуска точного расчёта расхода по городам.
  * Avito rate limit /stats/v2/spendings = 1 запрос/мин, поэтому процесс
- * идёт ~5 минут на 5 городов.
+ * идёт последовательно по всем городам без уже уточнённых.
  */
 function PreciseCalcBar({
   preciseCount,
@@ -667,7 +704,7 @@ function PreciseCalcBar({
         onClick={onRun}
         disabled={progress.busy}
         className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
-        title="Точный расход через Avito API (filter.itemIDs). 1 запрос/мин ≈ 5 минут на 5 городов."
+        title="Точный расход через Avito API (filter.itemIds). 1 запрос/мин, города уточняются последовательно."
       >
         {progress.busy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -677,12 +714,12 @@ function PreciseCalcBar({
         {progress.busy
           ? `Уточняю ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ''}`
           : preciseCount > 0
-          ? `Уточнить ещё (точных: ${preciseCount})`
-          : 'Уточнить расход по топ-5 городам'}
+          ? `Уточнить ещё (точных городов: ${preciseCount})`
+          : 'Уточнить данные'}
       </button>
       {!progress.busy && preciseCount === 0 && (
         <span className="text-ink-400">
-          Текущие суммы — приближение. Кнопка запросит точный расход в Avito (~5 мин).
+          Текущие суммы — приближение. Кнопка последовательно уточнит все города в Avito.
         </span>
       )}
     </div>

@@ -95,7 +95,7 @@ export function calculateAccountStats(
   }
   if (budgetUsage > 100) {
     warnings.push(
-      `Месячный бюджет израсходован на ${formatPercent(budgetUsage, 0)} — превышение ${formatRub(
+      `Плановый бюджет периода израсходован на ${formatPercent(budgetUsage, 0)} — превышение ${formatRub(
         totalSpend - kpi.monthlyBudget
       )}.`
     );
@@ -135,6 +135,29 @@ export function calculateAccountStats(
   };
 }
 
+export function dateRangeDays(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00`);
+  const end = Date.parse(`${to}T00:00:00`);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 30;
+  return Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+}
+
+export function scaleKpiForPeriod(
+  kpi: AccountKpi,
+  from: string,
+  to: string
+): AccountKpi {
+  const days = dateRangeDays(from, to);
+  const monthFactor = days / 30;
+  return {
+    ...kpi,
+    targetLeads: Math.max(1, Math.round(kpi.targetLeads * monthFactor)),
+    monthlyBudget: Math.round(kpi.monthlyBudget * monthFactor),
+    weeklyBudget: Math.round(kpi.weeklyBudget * (days / 7)),
+    dailyBudget: Math.round(kpi.dailyBudget * days),
+  };
+}
+
 export type ItemEfficiency = 'effective' | 'overspend' | 'lowConversion' | 'noData' | 'noLeads' | 'average';
 
 export function classifyItem(item: AvitoItem, kpi: AccountKpi): ItemEfficiency {
@@ -151,14 +174,23 @@ export function classifyItem(item: AvitoItem, kpi: AccountKpi): ItemEfficiency {
   return 'average';
 }
 
+export function subcategoryName(category: string): string {
+  const parts = String(category ?? '')
+    .split(/[>/|]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.at(-1) || category || 'Без категории';
+}
+
 export function categoryAverages(items: AvitoItem[]) {
   const groups = new Map<string, { spend: number; contacts: number; views: number }>();
   for (const it of items) {
-    const g = groups.get(it.category) ?? { spend: 0, contacts: 0, views: 0 };
+    const key = subcategoryName(it.category);
+    const g = groups.get(key) ?? { spend: 0, contacts: 0, views: 0 };
     g.spend += it.spend;
     g.contacts += it.contacts;
     g.views += it.views;
-    groups.set(it.category, g);
+    groups.set(key, g);
   }
   const out = new Map<string, { cpl: number | null; conversion: number | null; spend: number }>();
   for (const [k, v] of groups.entries()) {

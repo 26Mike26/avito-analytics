@@ -36,6 +36,8 @@ export type AvitoItem = {
   createdAt: string;
   /** Ссылка на объявление на Авито (приходит из /core/v1/items в поле url). */
   url?: string;
+  /** Первое фото объявления, если API Авито вернуло изображения. */
+  imageUrl?: string;
 };
 
 export type ItemMetrics = {

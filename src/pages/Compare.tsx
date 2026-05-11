@@ -789,7 +789,7 @@ function PreciseCompareBar({
           onClick={onRun}
           disabled={progress.busy}
           className="btn-secondary disabled:opacity-50"
-          title="Точный расход через Avito API: /stats/v2/spendings с filter.itemIDs. Ограничение Avito — примерно 1 запрос в минуту."
+          title="Точный расход через Avito API: /stats/v2/spendings с filter.itemIds. Ограничение Avito — примерно 1 запрос в минуту."
         >
           {progress.busy ? (
             <Loader2 className="w-4 h-4 animate-spin" />

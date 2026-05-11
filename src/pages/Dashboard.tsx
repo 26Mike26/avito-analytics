@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -7,11 +7,13 @@ import {
   Eye,
   Gift,
   Heart,
+  Loader2,
   Phone,
   PiggyBank,
   TrendingDown,
   TrendingUp,
   Wallet,
+  Wand2,
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { KpiCard } from '../components/KpiCard';
@@ -28,6 +30,7 @@ import {
   calcCpl,
   itemsInDateRange,
   regionAverages,
+  scaleKpiForPeriod,
 } from '../lib/analytics';
 import { MapPin } from 'lucide-react';
 
@@ -40,8 +43,26 @@ export default function Dashboard() {
   const accountCharges = useStore((s) => s.accountCharges);
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
+  const adapter = useStore((s) => s.adapter);
+  const currentAccountId = useStore((s) => s.currentAccountId);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
+  const periodKpi = useMemo(
+    () => scaleKpiForPeriod(kpi, period.from, period.to),
+    [kpi, period.from, period.to]
+  );
+  const [preciseItemSpend, setPreciseItemSpend] = useState<Map<string, number>>(new Map());
+  const [preciseItemsProgress, setPreciseItemsProgress] = useState({
+    busy: false,
+    done: 0,
+    total: 0,
+    nextEta: undefined as number | undefined,
+  });
+
+  useEffect(() => {
+    setPreciseItemSpend(new Map());
+    setPreciseItemsProgress({ busy: false, done: 0, total: 0, nextEta: undefined });
+  }, [currentAccountId, period.from, period.to]);
 
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
@@ -99,7 +120,7 @@ export default function Dashboard() {
   // Items с реальными суммами за выбранный период.
   // Если /stats/v2/spendings доступен — распределяем точное ads (promotion+presence)
   // и commission/rest пропорционально показам. Иначе fallback на operations_history.
-  const items = useMemo(
+  const periodItems = useMemo(
     () =>
       itemsInDateRange(
         allItems,
@@ -122,7 +143,15 @@ export default function Dashboard() {
       otherSpend,
     ]
   );
-  const stats = calculateAccountStats(items, kpi);
+  const items = useMemo(
+    () =>
+      periodItems.map((it) => {
+        const precise = preciseItemSpend.get(it.id);
+        return precise == null ? it : { ...it, spend: Math.round(precise) };
+      }),
+    [periodItems, preciseItemSpend]
+  );
+  const stats = calculateAccountStats(items, periodKpi);
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
 
@@ -138,6 +167,39 @@ export default function Dashboard() {
     .filter((i) => classifyItem(i, kpi) === 'overspend' || classifyItem(i, kpi) === 'noLeads')
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 5);
+
+  const runPreciseIneffectiveItems = async () => {
+    if (preciseItemsProgress.busy) return;
+    const targets = [...items]
+      .filter((i) => classifyItem(i, kpi) === 'overspend' || classifyItem(i, kpi) === 'noLeads')
+      .filter((i) => preciseItemSpend.get(i.id) == null)
+      .map((i) => ({ item: i, id: Number(i.id) }))
+      .filter((x) => Number.isFinite(x.id) && x.id > 0)
+      .sort((a, b) => b.item.spend - a.item.spend)
+      .slice(0, 10);
+    if (targets.length === 0) return;
+    const next = new Map(preciseItemSpend);
+    setPreciseItemsProgress({ busy: true, done: 0, total: targets.length, nextEta: undefined });
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      const result = await adapter.fetchAdsForItems({
+        dateFrom: period.from,
+        dateTo: period.to,
+        itemIds: [target.id],
+      });
+      if (result) {
+        next.set(target.item.id, Math.round(result.total));
+        setPreciseItemSpend(new Map(next));
+      }
+      setPreciseItemsProgress({ busy: true, done: i + 1, total: targets.length, nextEta: undefined });
+      if (i < targets.length - 1) {
+        const eta = Date.now() + 65_000;
+        setPreciseItemsProgress((p) => ({ ...p, nextEta: eta }));
+        await new Promise((res) => setTimeout(res, 65_000));
+      }
+    }
+    setPreciseItemsProgress({ busy: false, done: targets.length, total: targets.length, nextEta: undefined });
+  };
 
   const todayRecs = recommendations
     .filter((r) => r.status === 'new')
@@ -303,7 +365,7 @@ export default function Dashboard() {
           hint={
             spendingsInPeriod
               ? `Реклама ${formatRub(adsSpend)} + комиссии/прочее ${formatRub(otherSpend)}`
-              : `С учётом подписок/инструментов · ${formatPercent(stats.budgetUsage, 0)} от бюджета`
+              : `С учётом подписок/инструментов · ${formatPercent(stats.budgetUsage, 0)} от бюджета периода`
           }
           tone={stats.budgetUsage > 100 ? 'bad' : stats.budgetUsage > 85 ? 'warn' : 'default'}
         />
@@ -399,7 +461,7 @@ export default function Dashboard() {
           </div>
           <KpiProgress
             label="Лиды"
-            current={`${formatNumber(stats.totalContacts)} / ${formatNumber(kpi.targetLeads)}`}
+            current={`${formatNumber(stats.totalContacts)} / ${formatNumber(periodKpi.targetLeads)}`}
             value={stats.leadsProgress}
           />
           <KpiProgress
@@ -424,8 +486,8 @@ export default function Dashboard() {
             value={stats.conversionProgress ?? 0}
           />
           <KpiProgress
-            label="Бюджет месяца"
-            current={`${formatRub(stats.totalSpend)} / ${formatRub(kpi.monthlyBudget)}`}
+            label="Бюджет периода"
+            current={`${formatRub(stats.totalSpend)} / ${formatRub(periodKpi.monthlyBudget)}`}
             value={stats.budgetUsage}
             inverse={stats.budgetUsage > 100}
           />
@@ -473,7 +535,7 @@ export default function Dashboard() {
       {/* Города с перерасходом */}
       {cityStats.length > 0 && (
         <div className="card p-5 mb-6">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <MapPin className="w-4 h-4 text-accent" />
             <h2 className="font-semibold text-white">Статистика по городам</h2>
             {overspendCities.length > 0 && (
@@ -482,6 +544,11 @@ export default function Dashboard() {
               </Badge>
             )}
           </div>
+          <PreciseItemsBar
+            preciseCount={preciseItemSpend.size}
+            progress={preciseItemsProgress}
+            onRun={runPreciseIneffectiveItems}
+          />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -586,6 +653,53 @@ export default function Dashboard() {
         )}
       </div>
     </Layout>
+  );
+}
+
+function PreciseItemsBar({
+  preciseCount,
+  progress,
+  onRun,
+}: {
+  preciseCount: number;
+  progress: { busy: boolean; done: number; total: number; nextEta?: number };
+  onRun: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!progress.busy) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [progress.busy]);
+  const secLeft = progress.nextEta
+    ? Math.max(0, Math.round((progress.nextEta - now) / 1000))
+    : 0;
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+      <button
+        onClick={onRun}
+        disabled={progress.busy}
+        className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
+        title="Точный расход по топ-10 неэффективных объявлений через Avito API. Ограничение Avito — примерно 1 запрос в минуту."
+      >
+        {progress.busy ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Wand2 className="w-3.5 h-3.5" />
+        )}
+        {progress.busy
+          ? `Уточняю объявления ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ``}`
+          : preciseCount > 0
+          ? `Уточнить ещё (точных: ${preciseCount})`
+          : 'Уточнить топ-10 неэффективных'}
+      </button>
+      {!progress.busy && preciseCount === 0 && (
+        <span className="text-ink-400">
+          После уточнения городская таблица пересчитается по реальному расходу объявлений.
+        </span>
+      )}
+    </div>
   );
 }
 

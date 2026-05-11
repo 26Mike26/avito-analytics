@@ -21,7 +21,7 @@ import {
   type ChecklistRecommendation,
   type ItemScore,
 } from '../lib/insights';
-import { formatNumber, formatPercent, formatRub } from '../lib/analytics';
+import { formatNumber, formatPercent, formatRub, itemsInDateRange } from '../lib/analytics';
 
 const BUCKET_LABELS = {
   top: 'Успешные (топ 33%)',
@@ -30,10 +30,64 @@ const BUCKET_LABELS = {
 };
 
 export default function Insights() {
-  const items = useStore((s) => s.items);
+  const allItems = useStore((s) => s.items);
+  const metrics = useStore((s) => s.metrics);
+  const accountCharges = useStore((s) => s.accountCharges);
+  const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
+  const spendings = useStore((s) => s.spendings);
+  const period = useStore((s) => s.analyticsPeriod);
   const kpi = useStore((s) => s.kpi);
 
+  const adsTotalFromSpendings = useMemo(() => {
+    if (!spendings) return null;
+    const inRange = spendings.byDate.filter(
+      (d) => d.date >= period.from && d.date <= period.to
+    );
+    return inRange.reduce((sum, day) => sum + day.ads, 0);
+  }, [spendings, period.from, period.to]);
+
+  const otherTotalInPeriod = useMemo(() => {
+    if (spendings) {
+      const inRange = spendings.byDate.filter(
+        (d) => d.date >= period.from && d.date <= period.to
+      );
+      return inRange.reduce((sum, day) => sum + Math.max(0, day.total - day.ads), 0);
+    }
+    return accountCharges
+      .filter((charge) => charge.date >= period.from && charge.date <= period.to)
+      .filter((charge) => charge.kind === 'account_other')
+      .reduce((sum, charge) => sum + charge.amount, 0);
+  }, [spendings, accountCharges, period.from, period.to]);
+
+  const items = useMemo(
+    () =>
+      itemsInDateRange(
+        allItems,
+        metrics,
+        period.from,
+        period.to,
+        accountCharges,
+        hasPerItemSpend,
+        adsTotalFromSpendings,
+        otherTotalInPeriod
+      ),
+    [
+      allItems,
+      metrics,
+      period.from,
+      period.to,
+      accountCharges,
+      hasPerItemSpend,
+      adsTotalFromSpendings,
+      otherTotalInPeriod,
+    ]
+  );
+
   const scored = useMemo(() => scoreItems(items, kpi), [items, kpi]);
+  const successfulWithImages = useMemo(
+    () => scored.filter((score) => score.bucket === 'top' && score.item.imageUrl).slice(0, 6),
+    [scored]
+  );
   const topSummary = useMemo(() => summarizeBucket(scored, 'top'), [scored]);
   const bottomSummary = useMemo(() => summarizeBucket(scored, 'bottom'), [scored]);
   const words = useMemo(() => compareWords(scored), [scored]);
@@ -52,7 +106,7 @@ export default function Insights() {
     return (
       <Layout
         title="Инсайты по объявлениям"
-        subtitle="Сравнение успешных и неуспешных объявлений по тексту, цене и метрикам"
+        subtitle={`Сравнение успешных и неуспешных объявлений за период ${period.from} — ${period.to}`}
       >
         <Empty
           title="Недостаточно данных"
@@ -73,7 +127,7 @@ export default function Insights() {
   return (
     <Layout
       title="Инсайты по объявлениям"
-      subtitle="Что общего у успешных объявлений и где провисают неудачные"
+      subtitle={`Что общего у успешных объявлений и где провисают неудачные за период ${period.from} — ${period.to}`}
     >
       {/* Сравнение бакетов */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -131,6 +185,10 @@ export default function Insights() {
 
       {checklistRecommendations.length > 0 && (
         <ChecklistRecommendations recommendations={checklistRecommendations} />
+      )}
+
+      {successfulWithImages.length > 0 && (
+        <SuccessfulImages items={successfulWithImages} />
       )}
 
       {/* Слова */}
@@ -261,6 +319,44 @@ export default function Insights() {
         </div>
       </div>
     </Layout>
+  );
+}
+
+function SuccessfulImages({ items }: { items: ItemScore[] }) {
+  return (
+    <div className="card p-4 sm:p-5 mb-6">
+      <div className="flex items-center gap-2 mb-4">
+        <TrendingUp className="w-5 h-5 text-emerald-300" />
+        <h2 className="text-lg font-bold text-white">Первые фото успешных объявлений</h2>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {items.map(({ item, cpl, conversion }) => (
+          <Link
+            key={item.id}
+            to={`/items/${item.id}`}
+            className="group rounded-xl border border-ink-700 bg-ink-900/50 overflow-hidden hover:border-emerald-500/50 transition-colors"
+          >
+            <div className="aspect-[4/3] bg-ink-800 overflow-hidden">
+              <img
+                src={item.imageUrl}
+                alt={item.title}
+                loading="lazy"
+                className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-200"
+              />
+            </div>
+            <div className="p-3">
+              <div className="text-sm text-white font-medium line-clamp-2 min-h-10">
+                {item.title}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Badge tone="green">CPL {cpl != null ? formatRub(cpl) : '—'}</Badge>
+                <Badge tone="gray">CR {conversion != null ? formatPercent(conversion) : '—'}</Badge>
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
   );
 }
 

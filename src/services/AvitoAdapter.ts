@@ -29,6 +29,48 @@ function normalizeCity(raw: unknown): string {
   return first.replace(/^г\.?\s*/i, '').trim() || '—';
 }
 
+function findImageUrl(value: unknown): string | undefined {
+  const seen = new WeakSet<object>();
+
+  const scan = (input: unknown, depth: number, imageHint = false): string | undefined => {
+    if (depth > 5 || input == null) return undefined;
+    if (typeof input === 'string') {
+      const candidate = input.trim();
+      const isUrl = /^https?:\/\//i.test(candidate);
+      const hasImageExtension = /\.(jpe?g|png|webp)(\?|#|$)/i.test(candidate);
+      return isUrl && (imageHint || hasImageExtension) ? candidate : undefined;
+    }
+    if (typeof input !== 'object') return undefined;
+    if (seen.has(input)) return undefined;
+    seen.add(input);
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        const found = scan(item, depth + 1, imageHint);
+        if (found) return found;
+      }
+      return undefined;
+    }
+
+    const record = input as Record<string, unknown>;
+    for (const key of ['imageUrl', 'image_url', 'preview', 'thumbnail', '640x480']) {
+      const found = scan(record[key], depth + 1, true);
+      if (found) return found;
+    }
+    for (const key of ['url']) {
+      const found = scan(record[key], depth + 1, imageHint);
+      if (found) return found;
+    }
+    for (const key of ['images', 'photos', 'photo', 'image', 'pictures', 'resources']) {
+      const found = scan(record[key], depth + 1, true);
+      if (found) return found;
+    }
+    return undefined;
+  };
+
+  return scan(value, 0);
+}
+
 /**
  * Расход аккаунта по дням, не привязанный к конкретному объявлению.
  * kind:
@@ -140,7 +182,7 @@ export interface IAvitoAdapter {
     dateTo: string;
   }): Promise<SpendingsBreakdown | null>;
   /**
-   * Точный расход для подмножества itemIDs (для уточнения по городам).
+   * Точный расход для подмножества itemIds (для уточнения по городам).
    */
   fetchAdsForItems(opts: {
     dateFrom: string;
@@ -148,7 +190,7 @@ export interface IAvitoAdapter {
     itemIds: number[];
   }): Promise<{ ads: number; total: number } | null>;
   /**
-   * Точный расход для подмножества itemIDs с дневной разбивкой.
+   * Точный расход для подмножества itemIds с дневной разбивкой.
    * Нужен, чтобы одним запросом уточнять сразу оба сравниваемых периода.
    */
   fetchAdsForItemsByDate(opts: {
@@ -329,6 +371,10 @@ export class AvitoAdapter implements IAvitoAdapter {
           address?: string;
           price?: number;
           url?: string;
+          images?: unknown;
+          image?: unknown;
+          photos?: unknown;
+          photo?: unknown;
         }> = [];
         await Promise.all(
           statuses.map(async (st) => {
@@ -384,6 +430,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           revenue: undefined,
           createdAt: new Date().toISOString().slice(0, 10),
           url: it.url, // ссылка на сам Авито (для кнопки «Открыть на Авито»)
+          imageUrl: findImageUrl(it),
         }));
       } catch (e) {
         console.warn('[AvitoAdapter] fetchItems API error, fallback на demo:', e);
@@ -737,7 +784,7 @@ export class AvitoAdapter implements IAvitoAdapter {
   }
 
   /**
-   * Точная сумма расхода (ads = promotion + presence) для **подмножества itemIDs**.
+   * Точная сумма расхода (ads = promotion + presence) для **подмножества itemIds**.
    * Используется для уточнения расхода по городам — за один запрос можно
    * получить точную цифру для конкретного списка объявлений.
    * Rate limit Avito: 1 запрос в минуту.
@@ -767,7 +814,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           dateTo: opts.dateTo,
           grouping: 'day',
           spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
-          filter: { itemIDs: opts.itemIds.slice(0, 200) },
+          filter: { itemIds: opts.itemIds.slice(0, 200) },
         }),
         headers: { 'Content-Type': 'application/json' },
       });
@@ -819,7 +866,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           dateTo: opts.dateTo,
           grouping: 'day',
           spendingTypes: ['promotion', 'presence', 'commission', 'rest'],
-          filter: { itemIDs: opts.itemIds.slice(0, 200) },
+          filter: { itemIds: opts.itemIds.slice(0, 200) },
         }),
         headers: { 'Content-Type': 'application/json' },
       });
