@@ -342,6 +342,19 @@ app.post('/api/stats/items/v2', withAcc(async (accountId, req, res) => {
 // Кэшируем на 60 сек как и /stats/v2.
 const spendingsCache = new Map();
 const SPENDINGS_TTL_MS = 60_000;
+const SPENDINGS_RETRY_DELAY_MS = 65_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function alternateSpendingsFilter(filter) {
+  if (!filter || !Array.isArray(filter.itemIds)) return null;
+  const next = { ...filter, itemIDs: filter.itemIds };
+  delete next.itemIds;
+  return next;
+}
+
 app.post('/api/stats/spendings', withAcc(async (accountId, req, res) => {
   const { dateFrom, dateTo, grouping = 'day', spendingTypes, filter } = req.body;
   const types = spendingTypes ?? ['promotion', 'presence', 'commission', 'rest'];
@@ -358,14 +371,37 @@ app.post('/api/stats/spendings', withAcc(async (accountId, req, res) => {
     res.json(cached.data);
     return;
   }
-  try {
+  const requestSpendings = (requestFilter) => {
     const body = { dateFrom, dateTo, grouping, spendingTypes: types };
-    if (filter) body.filter = filter;
-    const result = await avitoFetch(
+    if (requestFilter) body.filter = requestFilter;
+    return avitoFetch(
       accountId,
       `/stats/v2/accounts/${accountId}/spendings`,
       { method: 'POST', body: JSON.stringify(body) }
     );
+  };
+
+  const requestWithFilterFallback = async () => {
+    try {
+      return await requestSpendings(filter);
+    } catch (e) {
+      const fallbackFilter = alternateSpendingsFilter(filter);
+      if (e.status === 400 && fallbackFilter) {
+        return requestSpendings(fallbackFilter);
+      }
+      throw e;
+    }
+  };
+
+  try {
+    let result;
+    try {
+      result = await requestWithFilterFallback();
+    } catch (e) {
+      if (e.status !== 429) throw e;
+      await sleep(SPENDINGS_RETRY_DELAY_MS);
+      result = await requestWithFilterFallback();
+    }
     spendingsCache.set(key, { ts: Date.now(), data: result });
     if (spendingsCache.size > 100) {
       const oldest = [...spendingsCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];

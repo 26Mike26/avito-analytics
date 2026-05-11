@@ -225,6 +225,8 @@ export default function Compare() {
 
     const cityMap = new Map(preciseCities);
     const itemMap = new Map(preciseItems);
+    let applied = 0;
+    let failed = 0;
 
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i];
@@ -248,16 +250,16 @@ export default function Compare() {
           itemMap.set(target.key, pair);
           setPreciseItems(new Map(itemMap));
         }
+        applied += 1;
       } else {
-        setPreciseProgress({
-          busy: false,
-          done: i,
-          total: targets.length,
-          error: 'Avito не вернул точные расходы для этого аккаунта или периода.',
-        });
-        return;
+        failed += 1;
       }
-      setPreciseProgress({ busy: true, done: i + 1, total: targets.length });
+      setPreciseProgress({
+        busy: true,
+        done: i + 1,
+        total: targets.length,
+        error: failed > 0 ? `Не удалось уточнить ${failed} из ${targets.length}; остальные запросы продолжаются.` : undefined,
+      });
       if (i < targets.length - 1) {
         const eta = Date.now() + 65_000;
         setPreciseProgress((p) => ({ ...p, nextEta: eta, label: targets[i + 1].label }));
@@ -266,7 +268,17 @@ export default function Compare() {
       }
     }
 
-    setPreciseProgress({ busy: false, done: targets.length, total: targets.length });
+    setPreciseProgress({
+      busy: false,
+      done: targets.length,
+      total: targets.length,
+      error:
+        failed === 0
+          ? undefined
+          : applied > 0
+          ? `Уточнено: ${applied}. Не удалось: ${failed}.`
+          : 'Avito не вернул точные расходы. Я подождал лимит и попробовал альтернативный формат фильтра; проверьте доступ тарифа к /stats/v2/spendings.',
+    });
   };
 
   return (
