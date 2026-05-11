@@ -181,7 +181,7 @@ export type AvitoBalance = {
 export interface IAvitoAdapter {
   fetchItems(): Promise<AvitoItem[]>;
   fetchItemImages(items: Array<string | Pick<AvitoItem, 'id' | 'url'>>): Promise<Map<string, string>>;
-  fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]>;
+  fetchMetrics(items: AvitoItem[], opts?: { dateFrom?: string; dateTo?: string }): Promise<ItemMetrics[]>;
   updateBid(itemId: string, newBid: number): Promise<void>;
   testConnection(): Promise<{ ok: boolean; message: string }>;
   /**
@@ -520,13 +520,18 @@ export class AvitoAdapter implements IAvitoAdapter {
     return out;
   }
 
-  async fetchMetrics(items: AvitoItem[]): Promise<ItemMetrics[]> {
+  async fetchMetrics(
+    items: AvitoItem[],
+    opts: { dateFrom?: string; dateTo?: string } = {}
+  ): Promise<ItemMetrics[]> {
     if (this.settings.mode === 'api') {
       try {
         const today = new Date();
         const past = new Date(today);
         past.setDate(today.getDate() - 30);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        const dateFrom = opts.dateFrom ?? fmt(past);
+        const dateTo = opts.dateTo ?? fmt(today);
         const itemIds = items
           .map((i) => Number(i.id))
           .filter((n) => Number.isFinite(n) && n > 0);
@@ -538,7 +543,7 @@ export class AvitoAdapter implements IAvitoAdapter {
         // ─── Сначала пробуем v2 — там МОЖЕТ быть per-item spent.
         // Если получилось — используем его и НЕ распределяем CPx-пул второй раз.
         // Защищаемся от 429/ошибок/неполных данных — fallback на v1.
-        const v2Result = await this.tryFetchStatsV2(itemIds, fmt(past), fmt(today));
+        const v2Result = await this.tryFetchStatsV2(itemIds, dateFrom, dateTo);
         const v2HasSpend =
           v2Result.length > 0 && v2Result.some((m) => m.spend > 0);
         if (v2HasSpend) {
@@ -558,8 +563,8 @@ export class AvitoAdapter implements IAvitoAdapter {
               method: 'POST',
               ...this.headers(),
               body: JSON.stringify({
-                dateFrom: fmt(past),
-                dateTo: fmt(today),
+                dateFrom,
+                dateTo,
                 itemIds: slice,
                 // Avito API v1 не отдаёт настоящие показы (impressions).
                 // Используем uniqViews как просмотры, CTR оставляем недоступным.
@@ -606,8 +611,8 @@ export class AvitoAdapter implements IAvitoAdapter {
         // у каждого списания за услугу (vas/cpa/cpc/cpx) есть itemId.
         try {
           // Avito ждёт ISO 8601 с временем (dateTimeFrom/dateTimeTo).
-          const dtFrom = `${fmt(past)}T00:00:00Z`;
-          const dtTo = `${fmt(today)}T23:59:59Z`;
+          const dtFrom = `${dateFrom}T00:00:00Z`;
+          const dtTo = `${dateTo}T23:59:59Z`;
           const opsData = await proxyFetch<{
             result?: {
               operations?: Array<Record<string, unknown>>;

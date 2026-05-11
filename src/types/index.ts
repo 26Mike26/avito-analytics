@@ -115,6 +115,36 @@ export type Session = {
   startedAt: string;
 };
 
+export type AccountPeriodCacheEntry = {
+  from: string;
+  to: string;
+  savedAt: string;
+  items: AvitoItem[];
+  metrics: ItemMetrics[];
+  recommendations: Recommendation[];
+  accountCharges?: Array<{
+    date: string;
+    amount: number;
+    description: string;
+    kind: 'promotion_pool' | 'account_other' | 'refund';
+  }>;
+  hasPerItemSpend?: boolean;
+  spendings?: {
+    promotion: number;
+    presence: number;
+    commission: number;
+    rest: number;
+    total: number;
+    byDate: Array<{
+      date: string;
+      promotion: number;
+      presence: number;
+      ads: number;
+      total: number;
+    }>;
+  } | null;
+};
+
 export type AccountData = {
   id: string;
   name: string;
@@ -126,6 +156,8 @@ export type AccountData = {
   bidHistory: BidHistoryEntry[];
   notes: Record<string, string>;
   recommendations: Recommendation[];
+  /** Кеш снимков данных по выбранным периодам, чтобы вкладки/аккаунты не обнуляли UI. */
+  periodCache?: Record<string, AccountPeriodCacheEntry>;
   createdAt: string;
   /** Последний загруженный баланс аккаунта. Хранится как кеш, чтобы не обнулять UI при навигации. */
   balance?: {

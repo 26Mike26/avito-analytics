@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   AccountData,
   AccountKpi,
+  AccountPeriodCacheEntry,
   ActionLogEntry,
   ActionSource,
   ActionType,
@@ -39,6 +40,7 @@ const ACCOUNTS_KEY = 'avito-app-accounts';
 const ACTIVE_KEY = 'avito-app-active-account';
 const LOG_KEY = 'avito-app-action-log';
 const ANALYTICS_PERIOD_KEY = 'avito-app-analytics-period';
+const PERIOD_CACHE_LIMIT = 12;
 
 type ReportPeriod = { from: string; to: string };
 
@@ -314,6 +316,53 @@ function buildMirror(acc: AccountData) {
   };
 }
 
+function periodCacheKey(period: ReportPeriod): string {
+  return period.from + ':' + period.to;
+}
+
+function compactPeriodCache(
+  cache: Record<string, AccountPeriodCacheEntry>
+): Record<string, AccountPeriodCacheEntry> {
+  return Object.fromEntries(
+    Object.entries(cache)
+      .sort(([, a], [, b]) => b.savedAt.localeCompare(a.savedAt))
+      .slice(0, PERIOD_CACHE_LIMIT)
+  );
+}
+
+function withPeriodSnapshot(acc: AccountData, period: ReportPeriod): AccountData {
+  const key = periodCacheKey(period);
+  const snapshot: AccountPeriodCacheEntry = {
+    from: period.from,
+    to: period.to,
+    savedAt: new Date().toISOString(),
+    items: acc.items,
+    metrics: acc.metrics,
+    recommendations: acc.recommendations,
+    accountCharges: acc.accountCharges ?? [],
+    hasPerItemSpend: acc.hasPerItemSpend ?? false,
+    spendings: acc.spendings ?? null,
+  };
+  return {
+    ...acc,
+    periodCache: compactPeriodCache({ ...(acc.periodCache ?? {}), [key]: snapshot }),
+  };
+}
+
+function buildMirrorForPeriod(acc: AccountData, period: ReportPeriod) {
+  const snapshot = acc.periodCache?.[periodCacheKey(period)];
+  if (!snapshot) return buildMirror(acc);
+  return {
+    ...buildMirror(acc),
+    items: snapshot.items,
+    metrics: snapshot.metrics,
+    recommendations: snapshot.recommendations,
+    accountCharges: snapshot.accountCharges ?? acc.accountCharges ?? [],
+    hasPerItemSpend: snapshot.hasPerItemSpend ?? acc.hasPerItemSpend ?? false,
+    spendings: snapshot.spendings ?? acc.spendings ?? null,
+  };
+}
+
 function enrichItemsFromMetrics(items: AvitoItem[], metrics: ItemMetrics[]): AvitoItem[] {
   return items.map((it) => {
     const itemMetrics = metrics.filter((m) => m.itemId === it.id);
@@ -367,7 +416,12 @@ export const useStore = create<Store>((set, get) => {
     analyticsPeriod: persistedAnalyticsPeriod,
     setAnalyticsPeriod: (period) => {
       saveAnalyticsPeriod(period);
-      set({ analyticsPeriod: period });
+      const id = get().currentAccountId;
+      const acc = id ? get().accounts[id] : null;
+      set({
+        analyticsPeriod: period,
+        ...(acc ? buildMirrorForPeriod(acc, period) : {}),
+      });
     },
 
     bootstrap: async () => {
@@ -395,6 +449,7 @@ export const useStore = create<Store>((set, get) => {
             accountCharges: a.accountCharges ?? cached?.accountCharges ?? [],
             hasPerItemSpend: a.hasPerItemSpend ?? cached?.hasPerItemSpend ?? false,
             spendings: a.spendings ?? cached?.spendings ?? null,
+            periodCache: a.periodCache ?? cached?.periodCache ?? {},
           };
         }
         let accountIds = remoteAccounts.map((a) => a.id);
@@ -424,7 +479,7 @@ export const useStore = create<Store>((set, get) => {
           accounts: accs,
           currentAccountId: activeId,
           actionLog: remoteLog,
-          ...buildMirror(acc),
+          ...buildMirrorForPeriod(acc, get().analyticsPeriod),
           initialized: true,
         });
         adapter.setSettings(acc.integration);
@@ -469,7 +524,7 @@ export const useStore = create<Store>((set, get) => {
 
       const acc = get().accounts[activeId];
       if (acc) {
-        set({ ...buildMirror(acc), initialized: true });
+        set({ ...buildMirrorForPeriod(acc, get().analyticsPeriod), initialized: true });
         adapter.setSettings(acc.integration);
       }
     },
@@ -540,7 +595,7 @@ export const useStore = create<Store>((set, get) => {
       const acc = get().accounts[activeId];
       set({
         currentAccountId: activeId,
-        ...buildMirror(acc),
+        ...buildMirrorForPeriod(acc, get().analyticsPeriod),
         initialized: true,
       });
       adapter.setSettings(acc.integration);
@@ -632,7 +687,7 @@ export const useStore = create<Store>((set, get) => {
         currentUser: updatedUser,
         currentAccountId: activeId,
         ...(next
-          ? buildMirror(next)
+          ? buildMirrorForPeriod(next, get().analyticsPeriod)
           : {
               items: [],
               metrics: [],
@@ -659,7 +714,7 @@ export const useStore = create<Store>((set, get) => {
       saveActiveId(id);
       set({
         currentAccountId: id,
-        ...buildMirror(acc),
+        ...buildMirrorForPeriod(acc, get().analyticsPeriod),
         initialized: true,
       });
       adapter.setSettings(acc.integration);
@@ -676,7 +731,7 @@ export const useStore = create<Store>((set, get) => {
           saveAccounts(nextAccs);
           set({
             accounts: nextAccs,
-            ...(get().currentAccountId === id ? buildMirror(nextAcc) : {}),
+            ...(get().currentAccountId === id ? buildMirrorForPeriod(nextAcc, get().analyticsPeriod) : {}),
           });
           void repository.saveAccountCache(id, nextAcc).catch((e) =>
             console.warn('[supabase] saveAccountCache on switch:', e)
@@ -732,6 +787,7 @@ export const useStore = create<Store>((set, get) => {
       }
 
       set({ loading: true });
+      const syncPeriod = get().analyticsPeriod;
 
       for (const id of apiAccountIds) {
         const accAtStart = get().accounts[id];
@@ -768,7 +824,10 @@ export const useStore = create<Store>((set, get) => {
             console.warn('[adapter] bulk fetchBids failed:', e);
           }
 
-          const metrics = await scopedAdapter.fetchMetrics(items);
+          const metrics = await scopedAdapter.fetchMetrics(items, {
+            dateFrom: syncPeriod.from,
+            dateTo: syncPeriod.to,
+          });
           const nextHasPerItemSpend = !!scopedAdapter.lastMetricsHadV2Spend;
 
           try {
@@ -808,13 +867,9 @@ export const useStore = create<Store>((set, get) => {
 
           let nextSpendings = accAtStart.spendings ?? null;
           try {
-            const today = new Date();
-            const past = new Date(today);
-            past.setDate(today.getDate() - 30);
-            const fmt = (d: Date) => d.toISOString().slice(0, 10);
             const sp = await scopedAdapter.fetchSpendings({
-              dateFrom: fmt(past),
-              dateTo: fmt(today),
+              dateFrom: syncPeriod.from,
+              dateTo: syncPeriod.to,
             });
             if (sp) nextSpendings = sp;
           } catch (e) {
@@ -838,19 +893,22 @@ export const useStore = create<Store>((set, get) => {
             hasPerItemSpend: nextHasPerItemSpend,
             spendings: nextSpendings,
           };
-          const nextAccs = { ...currentAccs, [id]: updated };
+          const updatedWithCache = withPeriodSnapshot(updated, syncPeriod);
+          const nextAccs = { ...currentAccs, [id]: updatedWithCache };
           saveAccounts(nextAccs);
           set({
             accounts: nextAccs,
-            ...(get().currentAccountId === id ? buildMirror(updated) : {}),
+            ...(get().currentAccountId === id
+              ? buildMirrorForPeriod(updatedWithCache, get().analyticsPeriod)
+              : {}),
           });
 
           void (async () => {
             try {
               await repository.saveItems(id, itemsWithRec);
               await repository.saveMetrics(id, metrics);
-              await repository.saveIntegration(id, updated.integration);
-              await repository.saveAccountCache(id, updated);
+              await repository.saveIntegration(id, updatedWithCache.integration);
+              await repository.saveAccountCache(id, updatedWithCache);
             } catch (e) {
               console.warn('[supabase] syncAllApiAccounts:', e);
             }
@@ -858,7 +916,7 @@ export const useStore = create<Store>((set, get) => {
 
           results.push({
             accountId: id,
-            accountName: updated.name,
+            accountName: updatedWithCache.name,
             status: 'success',
             message: 'Подключение работает, данные обновлены.',
             items: itemsWithRec.length,
@@ -891,7 +949,7 @@ export const useStore = create<Store>((set, get) => {
       if (!id) return;
       const acc = get().accounts[id];
       if (acc) {
-        set({ ...buildMirror(acc), initialized: true });
+        set({ ...buildMirrorForPeriod(acc, get().analyticsPeriod), initialized: true });
         adapter.setSettings(acc.integration);
       }
     },
@@ -923,15 +981,21 @@ export const useStore = create<Store>((set, get) => {
       if (!changed) return;
 
       const updated = { ...current, items: updatedItems };
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, get().analyticsPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       set({
         accounts: accs,
         ...(get().currentAccountId === id ? { items: updatedItems } : {}),
       });
-      void repository.saveItems(id, updatedItems).catch((e) =>
-        console.warn('[supabase] ensureItemImages:', e)
-      );
+      void (async () => {
+        try {
+          await repository.saveItems(id, updatedItems);
+          await repository.saveAccountCache(id, updatedWithCache);
+        } catch (e) {
+          console.warn('[supabase] ensureItemImages:', e);
+        }
+      })();
     },
 
     setKpi: (k) => {
@@ -995,7 +1059,8 @@ export const useStore = create<Store>((set, get) => {
       const recs = buildRecommendations(itemsWithRec, updated.kpi, updated.metrics);
       updated.items = itemsWithRec;
       updated.recommendations = recs;
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, get().analyticsPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       set({
         accounts: accs,
@@ -1013,6 +1078,7 @@ export const useStore = create<Store>((set, get) => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveBidHistory({ ...history, accountId: id });
+          await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
           console.warn('[supabase] setItemBid persist:', e);
         }
@@ -1119,13 +1185,14 @@ export const useStore = create<Store>((set, get) => {
         recommendations: recs,
         bidHistory: [...newHistory, ...acc.bidHistory],
       };
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, get().analyticsPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       set({
         accounts: accs,
         items: itemsWithRec,
         recommendations: recs,
-        bidHistory: updated.bidHistory,
+        bidHistory: updatedWithCache.bidHistory,
       });
       get().log(
         'item_bid_bulk_applied',
@@ -1138,6 +1205,7 @@ export const useStore = create<Store>((set, get) => {
           for (const h of newHistory) {
             await repository.saveBidHistory({ ...h, accountId: id });
           }
+          await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
           console.warn('[supabase] applyAllBidRecommendations:', e);
         }
@@ -1205,6 +1273,7 @@ export const useStore = create<Store>((set, get) => {
       const accAtStart = get().accounts[id];
       if (!accAtStart) return;
       const scopedAdapter = new AvitoAdapter(accAtStart.integration);
+      const syncPeriod = get().analyticsPeriod;
       set({ loading: true });
       // Запоминаем предыдущий снимок объявлений — будем сравнивать после fetch
       // и логировать изменения как события Авито (новые/снятые/изменённые).
@@ -1226,7 +1295,10 @@ export const useStore = create<Store>((set, get) => {
       } catch (e) {
         console.warn('[adapter] fetchBids failed:', e);
       }
-      const metrics = await scopedAdapter.fetchMetrics(items);
+      const metrics = await scopedAdapter.fetchMetrics(items, {
+        dateFrom: syncPeriod.from,
+        dateTo: syncPeriod.to,
+      });
       // Запоминаем — пришёл ли per-item spend из v2. Это переключает UI:
       // если да, не распределяем CPx-аванс повторно по показам.
       const nextHasPerItemSpend = !!scopedAdapter.lastMetricsHadV2Spend;
@@ -1269,13 +1341,9 @@ export const useStore = create<Store>((set, get) => {
       // Точные расходы профиля (Avito Pro Статистика → Расходы).
       let nextSpendings = accAtStart.spendings ?? null;
       try {
-        const today = new Date();
-        const past = new Date(today);
-        past.setDate(today.getDate() - 30);
-        const fmt = (d: Date) => d.toISOString().slice(0, 10);
         const sp = await scopedAdapter.fetchSpendings({
-          dateFrom: fmt(past),
-          dateTo: fmt(today),
+          dateFrom: syncPeriod.from,
+          dateTo: syncPeriod.to,
         });
         if (sp) nextSpendings = sp;
       } catch (e) {
@@ -1322,20 +1390,21 @@ export const useStore = create<Store>((set, get) => {
         hasPerItemSpend: nextHasPerItemSpend,
         spendings: nextSpendings,
       };
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, syncPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       const isStillActive = get().currentAccountId === id;
       set({
         accounts: accs,
         loading: false,
-        ...(isStillActive ? buildMirror(updated) : {}),
+        ...(isStillActive ? buildMirrorForPeriod(updatedWithCache, get().analyticsPeriod) : {}),
       });
       void (async () => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
-          await repository.saveIntegration(id, updated.integration);
-          await repository.saveAccountCache(id, updated);
+          await repository.saveIntegration(id, updatedWithCache.integration);
+          await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
           console.warn('[supabase] reloadFromAdapter:', e);
         }
@@ -1386,7 +1455,8 @@ export const useStore = create<Store>((set, get) => {
         hasPerItemSpend: true,
         spendings: null,
       };
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, get().analyticsPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       set({
         accounts: accs,
@@ -1402,8 +1472,8 @@ export const useStore = create<Store>((set, get) => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
-          await repository.saveIntegration(id, updated.integration);
-          await repository.saveAccountCache(id, updated);
+          await repository.saveIntegration(id, updatedWithCache.integration);
+          await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
           console.warn('[supabase] applyImportedData:', e);
         }
@@ -1423,7 +1493,10 @@ export const useStore = create<Store>((set, get) => {
       const acc = { ...accs[id], integration: { ...accs[id].integration, mode: 'demo' as const } };
       adapter.setSettings(acc.integration);
       const items = await adapter.fetchItems();
-      const metrics = await adapter.fetchMetrics(items);
+      const metrics = await adapter.fetchMetrics(items, {
+        dateFrom: get().analyticsPeriod.from,
+        dateTo: get().analyticsPeriod.to,
+      });
       const itemsWithRec = applyBidRecommendationsToItems(items, acc.kpi, metrics);
       const recs = buildRecommendations(itemsWithRec, acc.kpi, metrics);
       const updated: AccountData = {
@@ -1436,14 +1509,15 @@ export const useStore = create<Store>((set, get) => {
         hasPerItemSpend: false,
         spendings: null,
       };
-      accs[id] = updated;
+      const updatedWithCache = withPeriodSnapshot(updated, get().analyticsPeriod);
+      accs[id] = updatedWithCache;
       saveAccounts(accs);
       set({
         accounts: accs,
         items: itemsWithRec,
         metrics,
         recommendations: recs,
-        integration: updated.integration,
+        integration: updatedWithCache.integration,
         balance: null,
         accountCharges: [],
         hasPerItemSpend: false,
@@ -1454,8 +1528,8 @@ export const useStore = create<Store>((set, get) => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
-          await repository.saveIntegration(id, updated.integration);
-          await repository.saveAccountCache(id, updated);
+          await repository.saveIntegration(id, updatedWithCache.integration);
+          await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
           console.warn('[supabase] resetToDemo:', e);
         }

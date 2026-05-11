@@ -16,7 +16,7 @@ import { SUPABASE_ENABLED, supabase } from './supabase';
 
 type AccountCacheData = Pick<
   AccountData,
-  'balance' | 'accountCharges' | 'hasPerItemSpend' | 'spendings'
+  'balance' | 'accountCharges' | 'hasPerItemSpend' | 'spendings' | 'periodCache'
 >;
 
 export interface IRepository {
@@ -126,6 +126,9 @@ class SupabaseRepository implements IRepository {
           : undefined,
         spendings: cache
           ? (cache.spendings as AccountData['spendings'] | undefined) ?? null
+          : undefined,
+        periodCache: cache
+          ? ((cache.meta as { periodCache?: AccountData['periodCache'] } | null)?.periodCache ?? {})
           : undefined,
       };
     });
@@ -242,6 +245,7 @@ class SupabaseRepository implements IRepository {
       spendings: cache.spendings ?? null,
       meta: {
         savedAt: new Date().toISOString(),
+        periodCache: cache.periodCache ?? {},
       },
       updated_at: new Date().toISOString(),
     });
