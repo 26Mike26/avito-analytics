@@ -23,6 +23,30 @@ import {
   scaleKpiForPeriod,
 } from '../lib/analytics';
 
+type PeriodValue = { from: string; to: string };
+
+function accountPeriodKey(period: PeriodValue): string {
+  return `${period.from}:${period.to}`;
+}
+
+function hasAccountSnapshotForPeriod(account: AccountData, period: PeriodValue): boolean {
+  return Boolean(account.periodCache?.[accountPeriodKey(period)]);
+}
+
+function accountViewForPeriod(account: AccountData, period: PeriodValue): AccountData {
+  const snapshot = account.periodCache?.[accountPeriodKey(period)];
+  if (!snapshot) return account;
+  return {
+    ...account,
+    items: snapshot.items,
+    metrics: snapshot.metrics,
+    recommendations: snapshot.recommendations,
+    accountCharges: snapshot.accountCharges ?? account.accountCharges ?? [],
+    hasPerItemSpend: snapshot.hasPerItemSpend ?? account.hasPerItemSpend ?? false,
+    spendings: snapshot.spendings ?? account.spendings ?? null,
+  };
+}
+
 type AccountStatsRow = {
   account: AccountData;
   spend: number;
@@ -69,7 +93,8 @@ export default function Accounts() {
 
   const accountStats = useMemo<AccountStatsRow[]>(
     () =>
-      userAccounts.map((account) => {
+      userAccounts.map((sourceAccount) => {
+        const account = accountViewForPeriod(sourceAccount, statsPeriod);
         const adsTotalFromSpendings = account.spendings
           ? account.spendings.byDate
               .filter((d) => d.date >= statsPeriod.from && d.date <= statsPeriod.to)
@@ -129,6 +154,19 @@ export default function Accounts() {
       setSyncResults(results);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleStatsPeriodChange = (nextPeriod: PeriodValue) => {
+    const changed = nextPeriod.from !== statsPeriod.from || nextPeriod.to !== statsPeriod.to;
+    setStatsPeriod(nextPeriod);
+    if (!changed || syncing) return;
+
+    const needsApiRefresh = apiAccounts.some(
+      (account) => !hasAccountSnapshotForPeriod(account, nextPeriod)
+    );
+    if (needsApiRefresh) {
+      void runBulkSync();
     }
   };
 
@@ -217,7 +255,7 @@ export default function Accounts() {
                 </p>
               </div>
             </div>
-            <PeriodPicker value={statsPeriod} onChange={setStatsPeriod} className="xl:justify-end" />
+            <PeriodPicker value={statsPeriod} onChange={handleStatsPeriodChange} className="xl:justify-end" />
           </div>
         </div>
 
