@@ -29,16 +29,103 @@ function normalizeCity(raw: unknown): string {
   return first.replace(/^г\.?\s*/i, '').trim() || '—';
 }
 
+function decodeImageValue(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u003D/g, '=')
+    .replace(/\\u003F/g, '?')
+    .replace(/\\u002F/g, '/')
+    .replace(/\\\//g, '/');
+}
+
+function normalizeImageUrl(candidate: unknown): string | undefined {
+  const cleaned = decodeImageValue(candidate)
+    .trim()
+    .replace(/^["']+|["']+$/g, '');
+  if (!cleaned || /^(data:|blob:|javascript:)/i.test(cleaned)) return undefined;
+  try {
+    const url = new URL(cleaned, 'https://www.avito.ru/');
+    return /^https?:$/i.test(url.protocol) ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLikelyImageUrl(candidate: unknown): boolean {
+  const normalized = normalizeImageUrl(candidate);
+  if (!normalized) return false;
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    return (
+      /\.(jpe?g|png|webp|avif)(?:$|[?#])/i.test(normalized) ||
+      host === 'img.avito.st' ||
+      host.endsWith('.img.avito.st') ||
+      path.includes('/image/') ||
+      path.includes('/images/') ||
+      path.includes('/preview/') ||
+      /^\/\d+x\d+(?:\/|$)/.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function findImageUrl(value: unknown): string | undefined {
   const seen = new WeakSet<object>();
+  const directImageKeys = [
+    '_firstImageUrl',
+    'firstImageUrl',
+    'first_image_url',
+    'firstImage',
+    'first_image',
+    'mainImage',
+    'main_image',
+    'displayImage',
+    'display_image',
+    'previewImage',
+    'preview_image',
+    'imageUrl',
+    'image_url',
+    'imageUrls',
+    'image_urls',
+    'imagesUrls',
+    'images_urls',
+    'preview',
+    'thumbnail',
+    'thumb',
+    'avatar',
+    'small',
+    'medium',
+    'large',
+    'src',
+    'href',
+    '140x105',
+    '208x156',
+    '236x177',
+    '640x480',
+    '1280x960',
+  ];
+  const imageContainerKeys = [
+    'images',
+    'photos',
+    'photo',
+    'image',
+    'pictures',
+    'gallery',
+    'media',
+    'resources',
+  ];
 
   const scan = (input: unknown, depth: number, imageHint = false): string | undefined => {
-    if (depth > 8 || input == null) return undefined;
+    if (depth > 10 || input == null) return undefined;
     if (typeof input === 'string') {
-      const candidate = input.trim();
-      const isUrl = /^https?:\/\//i.test(candidate);
-      const hasImageExtension = /\.(jpe?g|png|webp)(\?|#|$)/i.test(candidate);
-      return isUrl && (imageHint || hasImageExtension) ? candidate : undefined;
+      const candidate = normalizeImageUrl(input);
+      return candidate && (imageHint || isLikelyImageUrl(candidate)) ? candidate : undefined;
     }
     if (typeof input !== 'object') return undefined;
     if (seen.has(input)) return undefined;
@@ -53,41 +140,24 @@ function findImageUrl(value: unknown): string | undefined {
     }
 
     const record = input as Record<string, unknown>;
-    for (const key of [
-      '_firstImageUrl',
-      'firstImageUrl',
-      'first_image_url',
-      'imageUrl',
-      'image_url',
-      'imageUrls',
-      'image_urls',
-      'preview',
-      'thumbnail',
-      'small',
-      'medium',
-      'large',
-      '140x105',
-      '640x480',
-      '1280x960',
-    ]) {
+    for (const key of directImageKeys) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
     }
-    for (const key of ['url']) {
+    for (const key of ['url', 'value']) {
       const found = scan(record[key], depth + 1, imageHint);
       if (found) return found;
     }
-    for (const key of ['images', 'photos', 'photo', 'image', 'pictures', 'resources']) {
+    for (const key of imageContainerKeys) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
     }
-    if (imageHint) {
-      for (const [key, val] of Object.entries(record)) {
-        const keyLooksLikeImage =
-          /image|photo|picture|preview|thumbnail|url/i.test(key) || /^\d+x\d+$/.test(key);
-        const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
-        if (found) return found;
-      }
+    for (const [key, val] of Object.entries(record)) {
+      const keyLooksLikeImage =
+        /image|photo|picture|preview|thumbnail|thumb|gallery|media/i.test(key) || /^\d+x\d+$/.test(key);
+      if (!imageHint && !keyLooksLikeImage) continue;
+      const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
+      if (found) return found;
     }
     return undefined;
   };

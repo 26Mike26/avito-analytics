@@ -158,47 +158,141 @@ function decodeHtmlEntities(value) {
     .replace(/&#039;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u003D/g, '=')
+    .replace(/\\u003F/g, '?')
     .replace(/\\u002F/g, '/')
     .replace(/\\\//g, '/');
 }
 
-function normalizeImageUrl(candidate, baseUrl) {
-  const cleaned = decodeHtmlEntities(candidate).trim();
-  if (!cleaned) return undefined;
+function normalizeImageUrl(candidate, baseUrl = 'https://www.avito.ru/') {
+  const cleaned = decodeHtmlEntities(candidate)
+    .trim()
+    .replace(/^["']+|["']+$/g, '');
+  if (!cleaned || /^(data:|blob:|javascript:)/i.test(cleaned)) return undefined;
   try {
-    return new URL(cleaned, baseUrl).href;
+    const url = new URL(cleaned, baseUrl);
+    return /^https?:$/i.test(url.protocol) ? url.href : undefined;
   } catch {
     return undefined;
   }
 }
 
-function extractImageFromHtml(html, pageUrl) {
-  const patterns = [
-    /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["'][^>]*>/i,
-    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["'][^>]*>/i,
-    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
-    /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["'][^>]*>/i,
-    /"image"\s*:\s*"([^"<]+)"/i,
-    /"images"\s*:\s*\[\s*"([^"<]+)"/i,
-    /(https?:\\?\/\\?\/[^"'<>\s]+\.(?:jpe?g|png|webp)(?:[^"'<>\s]*)?)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    const url = match ? normalizeImageUrl(match[1], pageUrl) : undefined;
-    if (url) return url;
+function isLikelyImageUrl(candidate) {
+  const normalized = normalizeImageUrl(candidate);
+  if (!normalized) return false;
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    return (
+      /\.(jpe?g|png|webp|avif)(?:$|[?#])/i.test(normalized) ||
+      host === 'img.avito.st' ||
+      host.endsWith('.img.avito.st') ||
+      path.includes('/image/') ||
+      path.includes('/images/') ||
+      path.includes('/preview/') ||
+      /^\/\d+x\d+(?:\/|$)/.test(path)
+    );
+  } catch {
+    return false;
   }
-  return undefined;
+}
+
+function extractImageFromHtml(html, pageUrl) {
+  const candidates = [];
+  const addCandidate = (raw, trusted = false) => {
+    const url = normalizeImageUrl(raw, pageUrl);
+    if (url && (trusted || isLikelyImageUrl(url))) candidates.push(url);
+  };
+
+  const trustedPatterns = [
+    /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["'][^>]*>/gi,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+    /<meta[^>]+itemprop=["']image["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+    /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["'][^>]*>/gi,
+  ];
+  for (const pattern of trustedPatterns) {
+    for (const match of html.matchAll(pattern)) addCandidate(match[1], true);
+  }
+
+  const jsonLdPattern = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  for (const match of html.matchAll(jsonLdPattern)) {
+    try {
+      const parsed = JSON.parse(decodeHtmlEntities(match[1]).trim());
+      const found = findImageUrlInObject(parsed);
+      if (found) addCandidate(found, true);
+    } catch {
+      // Avito иногда отдаёт JSON-LD с хвостами, ниже всё равно есть regex-fallback.
+    }
+  }
+
+  const loosePatterns = [
+    /"(?:image|imageUrl|image_url|thumbnail|preview|photo|picture)"\s*:\s*"([^"<]+)"/gi,
+    /"(?:url|src|href)"\s*:\s*"(https?:\\?\/\\?\/[^"<]+)"/gi,
+    /"(?:url|src|href)"\s*:\s*"(\\?\/\\?\/[^"<]+)"/gi,
+    /(https?:\\?\/\\?\/[^"'<>\s]*(?:img\.avito\.st|\/image\/|\/images\/)[^"'<>\s]*)/gi,
+    /["'](\\?\/\\?\/[^"']*(?:img\.avito\.st|\/image\/|\/images\/)[^"']*)["']/gi,
+  ];
+  for (const pattern of loosePatterns) {
+    for (const match of html.matchAll(pattern)) addCandidate(match[1]);
+  }
+
+  return candidates[0];
 }
 
 function findImageUrlInObject(value) {
   const seen = new WeakSet();
+  const directImageKeys = [
+    '_firstImageUrl',
+    'firstImageUrl',
+    'first_image_url',
+    'firstImage',
+    'first_image',
+    'mainImage',
+    'main_image',
+    'displayImage',
+    'display_image',
+    'previewImage',
+    'preview_image',
+    'imageUrl',
+    'image_url',
+    'imageUrls',
+    'image_urls',
+    'imagesUrls',
+    'images_urls',
+    'preview',
+    'thumbnail',
+    'thumb',
+    'avatar',
+    'small',
+    'medium',
+    'large',
+    'src',
+    'href',
+    '140x105',
+    '208x156',
+    '236x177',
+    '640x480',
+    '1280x960',
+  ];
+  const imageContainerKeys = [
+    'images',
+    'photos',
+    'photo',
+    'image',
+    'pictures',
+    'gallery',
+    'media',
+    'resources',
+  ];
+
   const scan = (input, depth, imageHint = false) => {
-    if (depth > 8 || input == null) return undefined;
+    if (depth > 10 || input == null) return undefined;
     if (typeof input === 'string') {
-      const candidate = input.trim();
-      const isUrl = /^https?:\/\//i.test(candidate);
-      const hasImageExtension = /\.(jpe?g|png|webp)(\?|#|$)/i.test(candidate);
-      return isUrl && (imageHint || hasImageExtension) ? candidate : undefined;
+      const candidate = normalizeImageUrl(input);
+      return candidate && (imageHint || isLikelyImageUrl(candidate)) ? candidate : undefined;
     }
     if (typeof input !== 'object') return undefined;
     if (seen.has(input)) return undefined;
@@ -211,50 +305,47 @@ function findImageUrlInObject(value) {
       return undefined;
     }
     const record = input;
-    for (const key of [
-      '_firstImageUrl',
-      'firstImageUrl',
-      'first_image_url',
-      'imageUrl',
-      'image_url',
-      'imageUrls',
-      'image_urls',
-      'preview',
-      'thumbnail',
-      'small',
-      'medium',
-      'large',
-      '140x105',
-      '640x480',
-      '1280x960',
-    ]) {
+    for (const key of directImageKeys) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
     }
-    for (const key of ['images', 'photos', 'photo', 'image', 'pictures', 'resources']) {
+    for (const key of ['url', 'value']) {
+      const found = scan(record[key], depth + 1, imageHint);
+      if (found) return found;
+    }
+    for (const key of imageContainerKeys) {
       const found = scan(record[key], depth + 1, true);
       if (found) return found;
     }
-    if (imageHint) {
-      for (const [key, val] of Object.entries(record)) {
-        const keyLooksLikeImage = /image|photo|picture|preview|thumbnail|url/i.test(key) || /^\d+x\d+$/.test(key);
-        const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
-        if (found) return found;
-      }
+    for (const [key, val] of Object.entries(record)) {
+      const keyLooksLikeImage =
+        /image|photo|picture|preview|thumbnail|thumb|gallery|media/i.test(key) || /^\d+x\d+$/.test(key);
+      if (!imageHint && !keyLooksLikeImage) continue;
+      const found = scan(val, depth + 1, imageHint || keyLooksLikeImage);
+      if (found) return found;
     }
     return undefined;
   };
   return scan(value, 0);
 }
 
+function normalizeAvitoItemUrl(candidate) {
+  const cleaned = decodeHtmlEntities(candidate).trim();
+  if (!cleaned) return undefined;
+  try {
+    const url = new URL(cleaned, 'https://www.avito.ru/');
+    const host = url.hostname.toLowerCase();
+    return (host === 'avito.ru' || host === 'www.avito.ru') ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function findAvitoItemUrl(value) {
   const seen = new WeakSet();
   const scan = (input, depth) => {
-    if (depth > 6 || input == null) return undefined;
-    if (typeof input === 'string') {
-      const candidate = input.trim();
-      return /^https?:\/\/(www\.)?avito\.ru\//i.test(candidate) ? candidate : undefined;
-    }
+    if (depth > 8 || input == null) return undefined;
+    if (typeof input === 'string') return normalizeAvitoItemUrl(input);
     if (typeof input !== 'object') return undefined;
     if (seen.has(input)) return undefined;
     seen.add(input);
@@ -266,8 +357,30 @@ function findAvitoItemUrl(value) {
       return undefined;
     }
     const record = input;
-    for (const key of ['url', 'itemUrl', 'item_url', 'link', 'uri']) {
+    for (const key of [
+      'url',
+      'href',
+      'link',
+      'uri',
+      'itemUrl',
+      'item_url',
+      'canonicalUrl',
+      'canonical_url',
+      'externalUrl',
+      'external_url',
+      'avitoUrl',
+      'avito_url',
+      'seoUrl',
+      'seo_url',
+      'shareUrl',
+      'share_url',
+    ]) {
       const found = scan(record[key], depth + 1);
+      if (found) return found;
+    }
+    for (const [key, val] of Object.entries(record)) {
+      if (!/url|href|link|uri/i.test(key)) continue;
+      const found = scan(val, depth + 1);
       if (found) return found;
     }
     return undefined;
@@ -281,6 +394,10 @@ async function fetchPublicItemImage(itemUrl) {
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+      Referer: 'https://www.avito.ru/',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
     },
