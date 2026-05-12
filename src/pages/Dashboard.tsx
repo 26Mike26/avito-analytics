@@ -28,6 +28,7 @@ import {
   formatPercent,
   formatRub,
   calcCpl,
+  calcCtr,
   itemsInDateRange,
   regionAverages,
   scaleKpiForPeriod,
@@ -196,10 +197,7 @@ export default function Dashboard() {
                 precise.views > 0
                   ? +((precise.contacts / precise.views) * 100).toFixed(1)
                   : null,
-              ctr:
-                precise.impressions > 0
-                  ? +((precise.views / precise.impressions) * 100).toFixed(2)
-                  : null,
+              ctr: calcCtr(precise.views, precise.impressions),
               precise: true,
             }
           : { ...r, precise: false };

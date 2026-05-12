@@ -610,9 +610,9 @@ export class AvitoAdapter implements IAvitoAdapter {
           return [];
         }
 
-        // ─── Сначала пробуем v2 — там МОЖЕТ быть per-item spent.
-        // Если получилось — используем его и НЕ распределяем CPx-пул второй раз.
-        // Защищаемся от 429/ошибок/неполных данных — fallback на v1.
+        // ─── Сначала пробуем v2: только там есть impressions для правильного CTR.
+        // Если v2 вернул spend — используем его полностью.
+        // Если spend не пришёл — ниже возьмём расход из fallback, но сохраним views/impressions из v2.
         const v2Result = await this.tryFetchStatsV2(itemIds, dateFrom, dateTo);
         const v2HasSpend =
           v2Result.length > 0 && v2Result.some((m) => m.spend > 0);
@@ -671,7 +671,7 @@ export class AvitoAdapter implements IAvitoAdapter {
             }
           }
         }
-        if (out.length === 0) {
+        if (out.length === 0 && v2Result.length === 0) {
           console.warn(
             '[AvitoAdapter] Avito не вернул статистику — возможно, у объявлений ещё нет данных за период, или не включён scope stats:read.'
           );
@@ -757,6 +757,24 @@ export class AvitoAdapter implements IAvitoAdapter {
           console.warn(
             '[AvitoAdapter] Не удалось подтянуть расходы из operations_history:',
             e
+          );
+        }
+        if (v2Result.length > 0) {
+          const outByKey = new Map(out.map((m) => [`${m.itemId}|${m.date}`, m]));
+          for (const v2 of v2Result) {
+            const key = `${v2.itemId}|${v2.date}`;
+            const existing = outByKey.get(key);
+            if (existing) {
+              existing.views = v2.views;
+              existing.impressions = v2.impressions;
+              existing.contacts = v2.contacts;
+              existing.favorites = v2.favorites;
+            } else {
+              out.push({ ...v2, spend: v2.spend || 0 });
+            }
+          }
+          console.info(
+            `[AvitoAdapter] /stats/v2 использован для CTR (${v2Result.length} строк), расход оставлен из fallback.`
           );
         }
         return out;

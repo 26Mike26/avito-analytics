@@ -1,5 +1,5 @@
 import type { AccountKpi, AvitoItem } from '../types';
-import { calcConversion, calcCpl } from './analytics';
+import { calcConversion, calcCpl, calcCtr } from './analytics';
 
 /**
  * Анализ объявлений: успешные vs неуспешные.
@@ -126,10 +126,6 @@ export function scoreItems(items: AvitoItem[], kpi: AccountKpi): ItemScore[] {
   return sorted;
 }
 
-function calcCtr(item: AvitoItem): number | null {
-  if (!item.impressions || item.impressions <= 0) return null;
-  return (item.views / item.impressions) * 100;
-}
 
 function titleLooksGeneric(title: string): boolean {
   const words = tokenize(title);
@@ -166,7 +162,7 @@ export function buildChecklistRecommendations(
 
   for (const s of scored) {
     const item = s.item;
-    const ctr = calcCtr(item);
+    const ctr = calcCtr(item.views, item.impressions);
     const checks: ChecklistCheck[] = [];
     const reasons: string[] = [];
     const hasTraffic = item.views >= 80 || (item.impressions ?? 0) >= 500;

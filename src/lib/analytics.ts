@@ -23,6 +23,11 @@ export function calcConversion(views: number, contacts: number): number | null {
   return (contacts / views) * 100;
 }
 
+export function calcCtr(views: number, impressions?: number): number | null {
+  if (!impressions || impressions <= 0) return null;
+  return +((views / impressions) * 100).toFixed(2);
+}
+
 export function calcRoi(revenue: number | undefined, spend: number): number | null {
   if (!spend || revenue === undefined) return null;
   return ((revenue - spend) / spend) * 100;
@@ -236,10 +241,8 @@ export function regionAverages(items: AvitoItem[]) {
       region: k,
       cpl: calcCpl(v.spend, v.contacts),
       conversion: calcConversion(v.views, v.contacts),
-      // CTR = views / impressions * 100 (Avito: uniqViews / views × 100).
-      // Если impressions отсутствует — null.
-      ctr:
-        v.impressions > 0 ? +((v.views / v.impressions) * 100).toFixed(2) : null,
+      // CTR считаем только через показы из stats/v2; если impressions нет — показываем «—».
+      ctr: calcCtr(v.views, v.impressions),
       spend: v.spend,
       contacts: v.contacts,
       views: v.views,
