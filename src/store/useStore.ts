@@ -40,7 +40,8 @@ const ACCOUNTS_KEY = 'avito-app-accounts';
 const ACTIVE_KEY = 'avito-app-active-account';
 const LOG_KEY = 'avito-app-action-log';
 const ANALYTICS_PERIOD_KEY = 'avito-app-analytics-period';
-const PERIOD_CACHE_LIMIT = 12;
+const PERIOD_CACHE_LIMIT = 4;
+const LOCAL_STORAGE_PERIOD_CACHE_LIMIT = 2;
 
 type ReportPeriod = { from: string; to: string };
 
@@ -82,8 +83,110 @@ function loadAccounts(): Record<string, AccountData> {
     return {};
   }
 }
+function isStorageQuotaError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'QuotaExceededError' ||
+      error.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      error.code === 22 ||
+      error.code === 1014)
+  );
+}
+
+function compactPeriodCacheToLimit(
+  cache: AccountData['periodCache'],
+  limit: number
+): AccountData['periodCache'] {
+  if (!cache || limit <= 0) return undefined;
+  const entries = Object.entries(cache)
+    .sort(([, a], [, b]) => b.savedAt.localeCompare(a.savedAt))
+    .slice(0, limit);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function compactAccountsForLocalStorage(
+  map: Record<string, AccountData>,
+  periodLimit: number
+): Record<string, AccountData> {
+  return Object.fromEntries(
+    Object.entries(map).map(([id, account]) => [
+      id,
+      {
+        ...account,
+        periodCache: compactPeriodCacheToLimit(account.periodCache, periodLimit),
+      },
+    ])
+  );
+}
+
+function lightweightAccountsForLocalStorage(
+  map: Record<string, AccountData>
+): Record<string, AccountData> {
+  return Object.fromEntries(
+    Object.entries(map).map(([id, account]) => [
+      id,
+      {
+        ...account,
+        // Большие массивы сохраняются в Supabase. В localStorage держим только легкий
+        // стартовый слепок, чтобы браузер не падал на лимите 5-10 МБ.
+        metrics: [],
+        recommendations: [],
+        periodCache: undefined,
+        accountCharges: (account.accountCharges ?? []).slice(-90),
+        spendings: account.spendings
+          ? {
+              ...account.spendings,
+              byDate: account.spendings.byDate.slice(-120),
+            }
+          : account.spendings,
+      },
+    ])
+  );
+}
+
+function trySaveAccountsMap(map: Record<string, AccountData>): boolean {
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(map));
+    return true;
+  } catch (error) {
+    if (!isStorageQuotaError(error)) throw error;
+    return false;
+  }
+}
+
 function saveAccounts(map: Record<string, AccountData>) {
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(map));
+  if (trySaveAccountsMap(map)) return;
+
+  const compacted = compactAccountsForLocalStorage(
+    map,
+    LOCAL_STORAGE_PERIOD_CACHE_LIMIT
+  );
+  if (trySaveAccountsMap(compacted)) {
+    console.warn(
+      '[storage] localStorage переполнен: сохранена компактная версия кеша аккаунтов.'
+    );
+    return;
+  }
+
+  const latestOnly = compactAccountsForLocalStorage(map, 1);
+  if (trySaveAccountsMap(latestOnly)) {
+    console.warn(
+      '[storage] localStorage переполнен: сохранён только последний периодный кеш.'
+    );
+    return;
+  }
+
+  const lightweight = lightweightAccountsForLocalStorage(map);
+  if (trySaveAccountsMap(lightweight)) {
+    console.warn(
+      '[storage] localStorage переполнен: сохранена легкая локальная копия, полные данные остаются в Supabase.'
+    );
+    return;
+  }
+
+  console.warn(
+    '[storage] Не удалось сохранить аккаунты в localStorage: даже легкая копия превышает лимит браузера.'
+  );
 }
 function loadActiveId(): string | null {
   return localStorage.getItem(ACTIVE_KEY);
@@ -323,11 +426,10 @@ function periodCacheKey(period: ReportPeriod): string {
 function compactPeriodCache(
   cache: Record<string, AccountPeriodCacheEntry>
 ): Record<string, AccountPeriodCacheEntry> {
-  return Object.fromEntries(
-    Object.entries(cache)
-      .sort(([, a], [, b]) => b.savedAt.localeCompare(a.savedAt))
-      .slice(0, PERIOD_CACHE_LIMIT)
-  );
+  return (compactPeriodCacheToLimit(cache, PERIOD_CACHE_LIMIT) ?? {}) as Record<
+    string,
+    AccountPeriodCacheEntry
+  >;
 }
 
 function withPeriodSnapshot(acc: AccountData, period: ReportPeriod): AccountData {
