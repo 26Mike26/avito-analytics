@@ -352,12 +352,19 @@ export default function Dashboard() {
     });
   };
 
-  const preciseItemCandidates = useMemo(
-    () =>
-      periodItems
-        .map((item) => ({ id: Number(item.id), key: String(item.id) }))
-        .filter((item) => Number.isFinite(item.id) && item.id > 0),
-    [periodItems]
+  const preciseItemCandidates = useMemo(() => {
+    const seen = new Set<string>();
+    return [...ineffectiveItems, ...successfulItems]
+      .map((item) => ({ id: Number(item.id), key: String(item.id) }))
+      .filter((item) => {
+        if (!Number.isFinite(item.id) || item.id <= 0 || seen.has(item.key)) return false;
+        seen.add(item.key);
+        return true;
+      });
+  }, [ineffectiveItems, successfulItems]);
+  const preciseItemCandidateKeys = useMemo(
+    () => new Set(preciseItemCandidates.map((item) => item.key)),
+    [preciseItemCandidates]
   );
 
   const runPrecisePeriodItems = async () => {
@@ -756,6 +763,8 @@ export default function Dashboard() {
           tone="green"
           items={successfulItems}
           preciseItemStats={preciseItemStats}
+          preciseCandidateKeys={preciseItemCandidateKeys}
+          preciseBusy={preciseItemsProgress.busy}
         />
         <TopList
           title={'Неуспешные объявления (' + ineffectiveItems.length + ')'}
@@ -763,6 +772,8 @@ export default function Dashboard() {
           tone="red"
           items={ineffectiveItems}
           preciseItemStats={preciseItemStats}
+          preciseCandidateKeys={preciseItemCandidateKeys}
+          preciseBusy={preciseItemsProgress.busy}
         />
       </div>
 
@@ -1029,12 +1040,16 @@ function TopList({
   items,
   tone,
   preciseItemStats,
+  preciseCandidateKeys,
+  preciseBusy,
 }: {
   title: string;
   icon: React.ReactNode;
   items: { id: string; title: string; spend: number; contacts: number }[];
   tone: 'green' | 'red';
   preciseItemStats: Map<string, PreciseItemStats>;
+  preciseCandidateKeys: Set<string>;
+  preciseBusy: boolean;
 }) {
   return (
     <div className="card p-5">
@@ -1048,7 +1063,9 @@ function TopList({
         <ul className="divide-y divide-ink-800 max-h-[430px] overflow-y-auto pr-1">
           {items.map((it) => {
             const cpl = calcCpl(it.spend, it.contacts);
-            const precise = preciseItemStats.has(String(it.id));
+            const key = String(it.id);
+            const precise = preciseItemStats.has(key);
+            const awaitingPrecise = preciseBusy && preciseCandidateKeys.has(key) && !precise;
             return (
               <li key={it.id} className="py-2.5 flex items-center justify-between gap-3">
                 <Link
@@ -1061,7 +1078,11 @@ function TopList({
                   <span className="text-ink-400">
                     {formatNumber(it.contacts)} лидов · {formatRub(it.spend)}
                   </span>
-                  {precise && <Badge tone="blue">уточнено</Badge>}
+                  {precise ? (
+                    <Badge tone="blue">уточнено</Badge>
+                  ) : awaitingPrecise ? (
+                    <Badge tone="gray">ожидает уточнения</Badge>
+                  ) : null}
                   <Badge tone={tone === 'green' ? 'green' : 'red'}>
                     {cpl != null ? formatRub(cpl) : 'нет лидов'}
                   </Badge>
