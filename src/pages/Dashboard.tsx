@@ -35,13 +35,16 @@ import {
 } from '../lib/analytics';
 import { MapPin } from 'lucide-react';
 
-type PreciseCityStats = {
+type PreciseStats = {
   spend: number;
   contacts: number;
   views: number;
   impressions: number;
   favorites: number;
 };
+
+type PreciseCityStats = PreciseStats;
+type PreciseItemStats = PreciseStats;
 
 export default function Dashboard() {
   const allItems = useStore((s) => s.items);
@@ -68,6 +71,13 @@ export default function Dashboard() {
     nextEta: undefined as number | undefined,
     error: undefined as string | undefined,
   });
+  const [preciseItemStats, setPreciseItemStats] = useState<Map<string, PreciseItemStats>>(new Map());
+  const [preciseItemsProgress, setPreciseItemsProgress] = useState({
+    busy: false,
+    done: 0,
+    total: 0,
+    error: undefined as string | undefined,
+  });
 
   useEffect(() => {
     setPreciseCityStats(new Map());
@@ -76,6 +86,13 @@ export default function Dashboard() {
       done: 0,
       total: 0,
       nextEta: undefined,
+      error: undefined,
+    });
+    setPreciseItemStats(new Map());
+    setPreciseItemsProgress({
+      busy: false,
+      done: 0,
+      total: 0,
       error: undefined,
     });
   }, [currentAccountId, period.from, period.to]);
@@ -159,7 +176,22 @@ export default function Dashboard() {
       otherSpend,
     ]
   );
-  const items = periodItems;
+  const items = useMemo(
+    () =>
+      periodItems.map((item) => {
+        const precise = preciseItemStats.get(String(item.id));
+        if (!precise) return item;
+        return {
+          ...item,
+          views: precise.views,
+          impressions: precise.impressions || undefined,
+          contacts: precise.contacts,
+          favorites: precise.favorites,
+          spend: Math.round(precise.spend),
+        };
+      }),
+    [periodItems, preciseItemStats]
+  );
   const stats = calculateAccountStats(items, periodKpi);
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
@@ -171,11 +203,10 @@ export default function Dashboard() {
       const cb = calcCpl(b.spend, b.contacts) ?? Infinity;
       return ca - cb;
     });
-  const top5 = sortedByEfficiency.slice(0, 5);
-  const overspend = [...items]
+  const successfulItems = sortedByEfficiency;
+  const ineffectiveItems = [...items]
     .filter((i) => classifyItem(i, kpi) === 'overspend' || classifyItem(i, kpi) === 'noLeads')
-    .sort((a, b) => b.spend - a.spend)
-    .slice(0, 5);
+    .sort((a, b) => b.spend - a.spend);
 
   const todayRecs = recommendations
     .filter((r) => r.status === 'new')
@@ -309,6 +340,64 @@ export default function Dashboard() {
       total: targets.length,
       nextEta: undefined,
       error: failed > 0 ? `Уточнено городов: ${targets.length - failed}. Не удалось: ${failed}.` : undefined,
+    });
+  };
+
+  const preciseItemCandidates = useMemo(
+    () =>
+      periodItems
+        .map((item) => ({ id: Number(item.id), key: String(item.id) }))
+        .filter((item) => Number.isFinite(item.id) && item.id > 0),
+    [periodItems]
+  );
+
+  const runPrecisePeriodItems = async () => {
+    if (preciseItemsProgress.busy) return;
+    const ids = Array.from(new Set(preciseItemCandidates.map((item) => item.id)));
+    if (ids.length === 0) return;
+
+    setPreciseItemsProgress({
+      busy: true,
+      done: 0,
+      total: ids.length,
+      error: undefined,
+    });
+
+    const apiMetrics = await adapter.fetchItemTotals({
+      dateFrom: period.from,
+      dateTo: period.to,
+      itemIds: ids,
+    });
+
+    if (!apiMetrics) {
+      setPreciseItemsProgress({
+        busy: false,
+        done: 0,
+        total: ids.length,
+        error: 'Avito не вернул точные данные по объявлениям за этот период.',
+      });
+      return;
+    }
+
+    const next = new Map(preciseItemStats);
+    for (const row of apiMetrics) {
+      next.set(String(row.itemId), {
+        views: Number(row.views ?? 0),
+        impressions: Number(row.impressions ?? 0),
+        contacts: Number(row.contacts ?? 0),
+        favorites: Number(row.favorites ?? 0),
+        spend: Number(row.spend ?? 0),
+      });
+    }
+    setPreciseItemStats(next);
+    setPreciseItemsProgress({
+      busy: false,
+      done: apiMetrics.length,
+      total: ids.length,
+      error:
+        apiMetrics.length < ids.length
+          ? 'Уточнено ' + apiMetrics.length + ' из ' + ids.length + '; по части объявлений Avito не вернул строки.'
+          : undefined,
     });
   };
 
@@ -608,18 +697,27 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <div className="card p-4 mb-4">
+        <PrecisePeriodItemsBar
+          preciseCount={preciseItemStats.size}
+          totalCount={preciseItemCandidates.length}
+          progress={preciseItemsProgress}
+          onRun={runPrecisePeriodItems}
+        />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <TopList
-          title="Топ-5 лучших объявлений"
+          title={'Успешные объявления (' + successfulItems.length + ')'}
           icon={<TrendingUp className="w-4 h-4 text-emerald-300" />}
           tone="green"
-          items={top5}
+          items={successfulItems}
         />
         <TopList
-          title="Топ-5 с перерасходом"
+          title={'Неуспешные объявления (' + ineffectiveItems.length + ')'}
           icon={<TrendingDown className="w-4 h-4 text-rose-300" />}
           tone="red"
-          items={overspend}
+          items={ineffectiveItems}
         />
       </div>
 
@@ -754,6 +852,50 @@ export default function Dashboard() {
   );
 }
 
+function PrecisePeriodItemsBar({
+  preciseCount,
+  totalCount,
+  progress,
+  onRun,
+}: {
+  preciseCount: number;
+  totalCount: number;
+  progress: { busy: boolean; done: number; total: number; error?: string };
+  onRun: () => void;
+}) {
+  const hasItems = totalCount > 0;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <button
+        onClick={onRun}
+        disabled={progress.busy || !hasItems}
+        className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
+        title="Точные просмотры, показы, контакты и расходы по всем объявлениям выбранного периода через Avito API."
+      >
+        {progress.busy ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Wand2 className="w-3.5 h-3.5" />
+        )}
+        {progress.busy
+          ? 'Уточняю объявления ' + progress.done + '/' + progress.total
+          : preciseCount > 0
+          ? 'Обновить точные данные (' + preciseCount + ' объявлений)'
+          : 'Уточнить все объявления за период'}
+      </button>
+      {progress.error ? (
+        <span className="text-amber-600">{progress.error}</span>
+      ) : !hasItems ? (
+        <span className="text-ink-400">За выбранный период нет объявлений с данными.</span>
+      ) : !progress.busy ? (
+        <span className="text-ink-400">
+          Пересчитает списки успешных и неуспешных объявлений по точным данным Avito.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function PreciseItemsBar({
   preciseCount,
   progress,
@@ -847,7 +989,7 @@ function TopList({
       {items.length === 0 ? (
         <div className="text-sm text-ink-400">Подходящих объявлений нет.</div>
       ) : (
-        <ul className="divide-y divide-ink-800">
+        <ul className="divide-y divide-ink-800 max-h-[430px] overflow-y-auto pr-1">
           {items.map((it) => {
             const cpl = calcCpl(it.spend, it.contacts);
             return (
