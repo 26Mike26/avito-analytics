@@ -76,6 +76,7 @@ export default function Dashboard() {
     busy: false,
     done: 0,
     total: 0,
+    nextEta: undefined as number | undefined,
     error: undefined as string | undefined,
   });
 
@@ -93,6 +94,7 @@ export default function Dashboard() {
       busy: false,
       done: 0,
       total: 0,
+      nextEta: undefined,
       error: undefined,
     });
   }, [currentAccountId, period.from, period.to]);
@@ -360,6 +362,7 @@ export default function Dashboard() {
       busy: true,
       done: 0,
       total: ids.length,
+      nextEta: undefined,
       error: undefined,
     });
 
@@ -370,7 +373,7 @@ export default function Dashboard() {
     });
 
     const fallbackById = new Map(periodItems.map((item) => [String(item.id), item]));
-    const rows = apiMetrics ?? ids.map((id) => {
+    const metricRows = apiMetrics ?? ids.map((id) => {
       const fallback = fallbackById.get(String(id));
       return {
         itemId: String(id),
@@ -378,38 +381,59 @@ export default function Dashboard() {
         impressions: Number(fallback?.impressions ?? 0),
         contacts: Number(fallback?.contacts ?? 0),
         favorites: Number(fallback?.favorites ?? 0),
-        spend: Number(fallback?.spend ?? 0),
+        spend: 0,
       };
     });
-
+    const metricsById = new Map(metricRows.map((row) => [String(row.itemId), row]));
     const next = new Map(preciseItemStats);
-    let usedSpendFallback = false;
-    for (const row of rows) {
-      const fallback = fallbackById.get(String(row.itemId));
-      const apiSpend = Number(row.spend ?? 0);
-      const fallbackSpend = Number(fallback?.spend ?? 0);
-      const spend = apiSpend > 0 || fallbackSpend === 0 ? apiSpend : fallbackSpend;
-      if (apiSpend <= 0 && fallbackSpend > 0) usedSpendFallback = true;
-      next.set(String(row.itemId), {
-        views: Number(row.views ?? fallback?.views ?? 0),
-        impressions: Number(row.impressions ?? fallback?.impressions ?? 0),
-        contacts: Number(row.contacts ?? fallback?.contacts ?? 0),
-        favorites: Number(row.favorites ?? fallback?.favorites ?? 0),
-        spend,
+    let failedSpend = 0;
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const key = String(id);
+      const fallback = fallbackById.get(key);
+      const row = metricsById.get(key);
+      const exactSpend = await adapter.fetchAdsForItems({
+        dateFrom: period.from,
+        dateTo: period.to,
+        itemIds: [id],
       });
+      if (!exactSpend) failedSpend += 1;
+
+      next.set(key, {
+        views: Number(row?.views ?? fallback?.views ?? 0),
+        impressions: Number(row?.impressions ?? fallback?.impressions ?? 0),
+        contacts: Number(row?.contacts ?? fallback?.contacts ?? 0),
+        favorites: Number(row?.favorites ?? fallback?.favorites ?? 0),
+        spend: exactSpend ? Math.round(exactSpend.total) : Number(fallback?.spend ?? 0),
+      });
+      setPreciseItemStats(new Map(next));
+      setPreciseItemsProgress({
+        busy: true,
+        done: i + 1,
+        total: ids.length,
+        nextEta: undefined,
+        error:
+          failedSpend > 0
+            ? 'Не удалось уточнить точный расход по ' + failedSpend + ' из ' + ids.length + ' объявлений; остальные продолжаются.'
+            : undefined,
+      });
+
+      if (i < ids.length - 1) {
+        const eta = Date.now() + 65_000;
+        setPreciseItemsProgress((progress) => ({ ...progress, nextEta: eta }));
+        await new Promise((resolve) => setTimeout(resolve, 65_000));
+      }
     }
-    setPreciseItemStats(next);
+
     setPreciseItemsProgress({
       busy: false,
-      done: rows.length,
+      done: ids.length,
       total: ids.length,
-      error: !apiMetrics
-        ? 'Avito не отдал stats/v2 по объявлениям; списки пересчитаны по уже загруженным данным периода.'
-        : rows.length < ids.length
-        ? 'Уточнено ' + rows.length + ' из ' + ids.length + '; по части объявлений Avito не вернул строки.'
-        : usedSpendFallback
-        ? 'Метрики уточнены через Avito; расход по части объявлений оставлен из текущей статистики периода.'
-        : undefined,
+      nextEta: undefined,
+      error: failedSpend > 0
+        ? 'Точный расход и CPL обновлены для ' + (ids.length - failedSpend) + ' из ' + ids.length + ' объявлений. По остальным оставлен расход периода.'
+        : 'Точный расход и CPL обновлены по всем объявлениям периода.',
     });
   };
 
@@ -872,17 +896,26 @@ function PrecisePeriodItemsBar({
 }: {
   preciseCount: number;
   totalCount: number;
-  progress: { busy: boolean; done: number; total: number; error?: string };
+  progress: { busy: boolean; done: number; total: number; nextEta?: number; error?: string };
   onRun: () => void;
 }) {
   const hasItems = totalCount > 0;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!progress.busy) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [progress.busy]);
+  const secLeft = progress.nextEta
+    ? Math.max(0, Math.round((progress.nextEta - now) / 1000))
+    : 0;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <button
         onClick={onRun}
         disabled={progress.busy || !hasItems}
         className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
-        title="Точные просмотры, показы, контакты и расходы по всем объявлениям выбранного периода через Avito API."
+        title="Точные метрики и точный расход по каждому объявлению через Avito API. Расход уточняется последовательно из-за лимита Avito примерно 1 запрос в минуту."
       >
         {progress.busy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -890,7 +923,7 @@ function PrecisePeriodItemsBar({
           <Wand2 className="w-3.5 h-3.5" />
         )}
         {progress.busy
-          ? 'Уточняю объявления ' + progress.done + '/' + progress.total
+          ? 'Уточняю расходы ' + progress.done + '/' + progress.total + (secLeft > 0 ? ' · ' + secLeft + ' c' : '')
           : preciseCount > 0
           ? 'Обновить точные данные (' + preciseCount + ' объявлений)'
           : 'Уточнить все объявления за период'}
@@ -901,7 +934,7 @@ function PrecisePeriodItemsBar({
         <span className="text-ink-400">За выбранный период нет объявлений с данными.</span>
       ) : !progress.busy ? (
         <span className="text-ink-400">
-          Пересчитает списки успешных и неуспешных объявлений по точным данным Avito.
+          Уточнит точный расход и CPL по каждому объявлению периода. Из-за лимита Avito процесс идет последовательно.
         </span>
       ) : null}
     </div>
