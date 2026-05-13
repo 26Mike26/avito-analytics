@@ -1073,7 +1073,11 @@ export class AvitoAdapter implements IAvitoAdapter {
     if (this.settings.mode !== 'api') return null;
     if (!PROXY_BASE) return null;
     if (opts.itemIds.length === 0) return [];
-    try {
+
+    const requestedIds = new Set(opts.itemIds.map((id) => String(id)));
+    const requestIds = opts.itemIds.length > 250 ? [] : opts.itemIds;
+
+    const request = async (metrics: string[]) => {
       const data = await proxyFetch<{
         result?: {
           items?: Array<{
@@ -1094,27 +1098,38 @@ export class AvitoAdapter implements IAvitoAdapter {
         body: JSON.stringify({
           dateFrom: opts.dateFrom,
           dateTo: opts.dateTo,
-          itemIds: opts.itemIds,
+          itemIds: requestIds,
           grouping: 'item',
-          metrics: ['views', 'impressions', 'contacts', 'favorites', 'allSpending'],
+          metrics,
         }),
         headers: { 'Content-Type': 'application/json' },
       });
-      if (data._v2_unavailable) return null;
+      return data._v2_unavailable ? null : data;
+    };
+
+    try {
+      let data = await request(['views', 'impressions', 'contacts', 'favorites', 'allSpending']);
+      if (!data) {
+        data = await request(['views', 'impressions', 'contacts', 'favorites']);
+      }
+      if (!data) return null;
+
       const items = data.result?.items ?? [];
-      return items.map((row) => {
-        const totals = (row.stats ?? []).reduce(
-          (acc, stat) => ({
-            views: acc.views + Number(stat.views ?? 0),
-            impressions: acc.impressions + Number(stat.impressions ?? 0),
-            contacts: acc.contacts + Number(stat.contacts ?? 0),
-            favorites: acc.favorites + Number(stat.favorites ?? 0),
-            spend: acc.spend + Number(stat.spent ?? 0),
-          }),
-          { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
-        );
-        return { itemId: String(row.itemId), ...totals };
-      });
+      return items
+        .filter((row) => requestedIds.size === 0 || requestedIds.has(String(row.itemId)))
+        .map((row) => {
+          const totals = (row.stats ?? []).reduce(
+            (acc, stat) => ({
+              views: acc.views + Number(stat.views ?? 0),
+              impressions: acc.impressions + Number(stat.impressions ?? 0),
+              contacts: acc.contacts + Number(stat.contacts ?? 0),
+              favorites: acc.favorites + Number(stat.favorites ?? 0),
+              spend: acc.spend + Number(stat.spent ?? 0),
+            }),
+            { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
+          );
+          return { itemId: String(row.itemId), ...totals };
+        });
     } catch (e) {
       console.info('[AvitoAdapter] fetchItemTotals error:', e);
       return null;

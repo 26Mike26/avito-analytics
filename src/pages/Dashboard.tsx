@@ -369,35 +369,47 @@ export default function Dashboard() {
       itemIds: ids,
     });
 
-    if (!apiMetrics) {
-      setPreciseItemsProgress({
-        busy: false,
-        done: 0,
-        total: ids.length,
-        error: 'Avito не вернул точные данные по объявлениям за этот период.',
-      });
-      return;
-    }
+    const fallbackById = new Map(periodItems.map((item) => [String(item.id), item]));
+    const rows = apiMetrics ?? ids.map((id) => {
+      const fallback = fallbackById.get(String(id));
+      return {
+        itemId: String(id),
+        views: Number(fallback?.views ?? 0),
+        impressions: Number(fallback?.impressions ?? 0),
+        contacts: Number(fallback?.contacts ?? 0),
+        favorites: Number(fallback?.favorites ?? 0),
+        spend: Number(fallback?.spend ?? 0),
+      };
+    });
 
     const next = new Map(preciseItemStats);
-    for (const row of apiMetrics) {
+    let usedSpendFallback = false;
+    for (const row of rows) {
+      const fallback = fallbackById.get(String(row.itemId));
+      const apiSpend = Number(row.spend ?? 0);
+      const fallbackSpend = Number(fallback?.spend ?? 0);
+      const spend = apiSpend > 0 || fallbackSpend === 0 ? apiSpend : fallbackSpend;
+      if (apiSpend <= 0 && fallbackSpend > 0) usedSpendFallback = true;
       next.set(String(row.itemId), {
-        views: Number(row.views ?? 0),
-        impressions: Number(row.impressions ?? 0),
-        contacts: Number(row.contacts ?? 0),
-        favorites: Number(row.favorites ?? 0),
-        spend: Number(row.spend ?? 0),
+        views: Number(row.views ?? fallback?.views ?? 0),
+        impressions: Number(row.impressions ?? fallback?.impressions ?? 0),
+        contacts: Number(row.contacts ?? fallback?.contacts ?? 0),
+        favorites: Number(row.favorites ?? fallback?.favorites ?? 0),
+        spend,
       });
     }
     setPreciseItemStats(next);
     setPreciseItemsProgress({
       busy: false,
-      done: apiMetrics.length,
+      done: rows.length,
       total: ids.length,
-      error:
-        apiMetrics.length < ids.length
-          ? 'Уточнено ' + apiMetrics.length + ' из ' + ids.length + '; по части объявлений Avito не вернул строки.'
-          : undefined,
+      error: !apiMetrics
+        ? 'Avito не отдал stats/v2 по объявлениям; списки пересчитаны по уже загруженным данным периода.'
+        : rows.length < ids.length
+        ? 'Уточнено ' + rows.length + ' из ' + ids.length + '; по части объявлений Avito не вернул строки.'
+        : usedSpendFallback
+        ? 'Показы, просмотры и лиды уточнены; расход по части объявлений оставлен из текущей статистики периода.'
+        : undefined,
     });
   };
 
