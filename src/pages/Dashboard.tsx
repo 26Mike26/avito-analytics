@@ -23,7 +23,6 @@ import { PeriodPicker } from '../components/PeriodPicker';
 import { useStore } from '../store/useStore';
 import {
   calculateAccountStats,
-  classifyItem,
   formatNumber,
   formatPercent,
   formatRub,
@@ -198,17 +197,25 @@ export default function Dashboard() {
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
 
-  const sortedByEfficiency = [...items]
-    .filter((i) => i.contacts > 0)
+  const itemsWithSpend = [...items].filter((item) => item.spend > 0);
+  const successfulItems = itemsWithSpend
+    .filter((item) => {
+      const cpl = calcCpl(item.spend, item.contacts);
+      return cpl != null && cpl <= kpi.targetCpl;
+    })
+    .sort((a, b) => (calcCpl(a.spend, a.contacts) ?? Infinity) - (calcCpl(b.spend, b.contacts) ?? Infinity));
+  const ineffectiveItems = itemsWithSpend
+    .filter((item) => {
+      const cpl = calcCpl(item.spend, item.contacts);
+      return cpl == null || cpl > kpi.targetCpl;
+    })
     .sort((a, b) => {
-      const ca = calcCpl(a.spend, a.contacts) ?? Infinity;
-      const cb = calcCpl(b.spend, b.contacts) ?? Infinity;
-      return ca - cb;
+      const ac = calcCpl(a.spend, a.contacts);
+      const bc = calcCpl(b.spend, b.contacts);
+      if (ac == null && bc != null) return -1;
+      if (bc == null && ac != null) return 1;
+      return (bc ?? 0) - (ac ?? 0);
     });
-  const successfulItems = sortedByEfficiency;
-  const ineffectiveItems = [...items]
-    .filter((i) => classifyItem(i, kpi) === 'overspend' || classifyItem(i, kpi) === 'noLeads')
-    .sort((a, b) => b.spend - a.spend);
 
   const todayRecs = recommendations
     .filter((r) => r.status === 'new')
@@ -748,12 +755,14 @@ export default function Dashboard() {
           icon={<TrendingUp className="w-4 h-4 text-emerald-300" />}
           tone="green"
           items={successfulItems}
+          preciseItemStats={preciseItemStats}
         />
         <TopList
           title={'Неуспешные объявления (' + ineffectiveItems.length + ')'}
           icon={<TrendingDown className="w-4 h-4 text-rose-300" />}
           tone="red"
           items={ineffectiveItems}
+          preciseItemStats={preciseItemStats}
         />
       </div>
 
@@ -1019,11 +1028,13 @@ function TopList({
   icon,
   items,
   tone,
+  preciseItemStats,
 }: {
   title: string;
   icon: React.ReactNode;
   items: { id: string; title: string; spend: number; contacts: number }[];
   tone: 'green' | 'red';
+  preciseItemStats: Map<string, PreciseItemStats>;
 }) {
   return (
     <div className="card p-5">
@@ -1037,6 +1048,7 @@ function TopList({
         <ul className="divide-y divide-ink-800 max-h-[430px] overflow-y-auto pr-1">
           {items.map((it) => {
             const cpl = calcCpl(it.spend, it.contacts);
+            const precise = preciseItemStats.has(String(it.id));
             return (
               <li key={it.id} className="py-2.5 flex items-center justify-between gap-3">
                 <Link
@@ -1049,6 +1061,7 @@ function TopList({
                   <span className="text-ink-400">
                     {formatNumber(it.contacts)} лидов · {formatRub(it.spend)}
                   </span>
+                  {precise && <Badge tone="blue">уточнено</Badge>}
                   <Badge tone={tone === 'green' ? 'green' : 'red'}>
                     {cpl != null ? formatRub(cpl) : 'нет лидов'}
                   </Badge>
