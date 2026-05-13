@@ -1077,6 +1077,71 @@ export class AvitoAdapter implements IAvitoAdapter {
     const requestedIds = new Set(opts.itemIds.map((id) => String(id)));
     const requestIds = opts.itemIds.length > 250 ? [] : opts.itemIds;
 
+    const fallbackV1 = async (): Promise<FilteredItemTotals[] | null> => {
+      try {
+        const byItem = new Map<string, FilteredItemTotals>();
+        for (const id of opts.itemIds) {
+          byItem.set(String(id), {
+            itemId: String(id),
+            views: 0,
+            impressions: 0,
+            contacts: 0,
+            favorites: 0,
+            spend: 0,
+          });
+        }
+
+        for (let i = 0; i < opts.itemIds.length; i += 200) {
+          const slice = opts.itemIds.slice(i, i + 200);
+          const data = await proxyFetch<{ result?: { items?: unknown[] } }>(
+            '/api/stats/items',
+            {
+              method: 'POST',
+              ...this.headers(),
+              body: JSON.stringify({
+                dateFrom: opts.dateFrom,
+                dateTo: opts.dateTo,
+                itemIds: slice,
+                fields: ['uniqViews', 'contacts', 'favorites'],
+                periodGrouping: 'day',
+              }),
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+          const rows = (data.result?.items ?? []) as Array<{
+            itemId?: number | string;
+            stats?: Array<{
+              views?: number;
+              uniqViews?: number;
+              contacts?: number;
+              favorites?: number;
+            }>;
+          }>;
+          for (const row of rows) {
+            const itemId = String(row.itemId);
+            const cur = byItem.get(itemId) ?? {
+              itemId,
+              views: 0,
+              impressions: 0,
+              contacts: 0,
+              favorites: 0,
+              spend: 0,
+            };
+            for (const stat of row.stats ?? []) {
+              cur.views += Number(stat.uniqViews ?? stat.views ?? 0);
+              cur.contacts += Number(stat.contacts ?? 0);
+              cur.favorites += Number(stat.favorites ?? 0);
+            }
+            byItem.set(itemId, cur);
+          }
+        }
+        return Array.from(byItem.values());
+      } catch (e) {
+        console.info('[AvitoAdapter] fetchItemTotals v1 fallback error:', e);
+        return null;
+      }
+    };
+
     const request = async (metrics: string[]) => {
       const data = await proxyFetch<{
         result?: {
@@ -1112,7 +1177,7 @@ export class AvitoAdapter implements IAvitoAdapter {
       if (!data) {
         data = await request(['views', 'impressions', 'contacts', 'favorites']);
       }
-      if (!data) return null;
+      if (!data) return fallbackV1();
 
       const items = data.result?.items ?? [];
       return items
@@ -1132,7 +1197,7 @@ export class AvitoAdapter implements IAvitoAdapter {
         });
     } catch (e) {
       console.info('[AvitoAdapter] fetchItemTotals error:', e);
-      return null;
+      return fallbackV1();
     }
   }
 
