@@ -23,7 +23,10 @@ import {
 } from '../lib/compare';
 import { calcCpl, formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
-import type { AvitoItem, ItemMetrics } from '../types';
+import type { AvitoItem, ItemDailyStat, ItemMetrics } from '../types';
+import { repository } from '../services/Repository';
+import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
+import { SUPABASE_ENABLED } from '../services/supabase';
 
 type Mode = 'date' | 'csv';
 type DateRange = { from: string; to: string };
@@ -44,6 +47,8 @@ export default function Compare() {
   const hasPerItemSpend = useStore((s) => s.hasPerItemSpend);
   const spendings = useStore((s) => s.spendings);
   const adapter = useStore((s) => s.adapter);
+  const currentAccountId = useStore((s) => s.currentAccountId);
+  const saveExactItemDailyStats = useStore((s) => s.saveExactItemDailyStats);
 
   const [mode, setMode] = useState<Mode>('date');
 
@@ -177,6 +182,91 @@ export default function Compare() {
     setPreciseProgress({ busy: false, done: 0, total: 0 });
   }, [mode, dateA.from, dateA.to, dateB.from, dateB.to]);
 
+  useEffect(() => {
+    if (
+      mode !== 'date' ||
+      !SUPABASE_ENABLED ||
+      !currentAccountId ||
+      !baseComparison ||
+      !datePeriodItems
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const dateFrom = minDate(dateA.from, dateB.from);
+    const dateTo = maxDate(dateA.to, dateB.to);
+
+    void (async () => {
+      try {
+        const rows = await repository.loadItemDailyStats(currentAccountId, dateFrom, dateTo);
+        if (cancelled) return;
+        const exactRows = rows.filter((row) => row.accuracy === 'exact');
+        if (exactRows.length === 0) return;
+
+        const rowsByItem = new Map<string, ItemDailyStat[]>();
+        for (const row of exactRows) {
+          const key = String(row.itemId);
+          rowsByItem.set(key, [...(rowsByItem.get(key) ?? []), row]);
+        }
+
+        const itemMap = new Map<string, PrecisePair>();
+        for (const item of baseComparison.items) {
+          const itemRows = rowsByItem.get(String(item.itemId)) ?? [];
+          if (itemRows.length === 0) continue;
+          const pair = {
+            a: sumDailyStatRowsForRange(itemRows, dateA),
+            b: sumDailyStatRowsForRange(itemRows, dateB),
+          };
+          if (pair.a > 0 || pair.b > 0) itemMap.set(String(item.itemId), pair);
+        }
+
+        const exactItemIds = new Set(exactRows.map((row) => String(row.itemId)));
+        const allPeriodItems = [...datePeriodItems.a, ...datePeriodItems.b];
+        const cityMap = new Map<string, PrecisePair>();
+        for (const city of baseComparison.cities) {
+          const cityItemIds = Array.from(
+            new Set(
+              allPeriodItems
+                .filter((it) => cleanRegionName(it.region) === city.region)
+                .map((it) => String(it.id))
+            )
+          );
+          if (
+            cityItemIds.length === 0 ||
+            !cityItemIds.every((itemId) => exactItemIds.has(itemId))
+          ) {
+            continue;
+          }
+          const cityRows = cityItemIds.flatMap((itemId) => rowsByItem.get(itemId) ?? []);
+          const pair = {
+            a: sumDailyStatRowsForRange(cityRows, dateA),
+            b: sumDailyStatRowsForRange(cityRows, dateB),
+          };
+          if (pair.a > 0 || pair.b > 0) cityMap.set(city.region, pair);
+        }
+
+        if (itemMap.size > 0) setPreciseItems(itemMap);
+        if (cityMap.size > 0) setPreciseCities(cityMap);
+      } catch (e) {
+        console.warn('[stats-cache] restore precise comparison:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    baseComparison,
+    currentAccountId,
+    dateA.from,
+    dateA.to,
+    dateB.from,
+    dateB.to,
+    datePeriodItems,
+    mode,
+  ]);
+
   const runPreciseExpenses = async () => {
     if (mode !== 'date' || !baseComparison || !datePeriodItems || preciseProgress.busy) return;
 
@@ -249,6 +339,12 @@ export default function Compare() {
         } else {
           itemMap.set(target.key, pair);
           setPreciseItems(new Map(itemMap));
+          if (currentAccountId) {
+            void saveExactItemDailyStats(
+              itemDailyStatsFromExactSpendRows(currentAccountId, target.key, metrics, rows),
+              { from: dateFrom, to: dateTo }
+            );
+          }
         }
         applied += 1;
       } else {
@@ -429,6 +525,17 @@ function sumRowsForRange(
     rows
       .filter((r) => r.date >= range.from && r.date <= range.to)
       .reduce((s, r) => s + r.total, 0)
+  );
+}
+
+function sumDailyStatRowsForRange(
+  rows: Array<{ date: string; spend: number }>,
+  range: DateRange
+): number {
+  return Math.round(
+    rows
+      .filter((r) => r.date >= range.from && r.date <= range.to)
+      .reduce((s, r) => s + Number(r.spend ?? 0), 0)
   );
 }
 
