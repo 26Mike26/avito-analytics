@@ -491,6 +491,7 @@ export class AvitoAdapter implements IAvitoAdapter {
           photos?: unknown;
           photo?: unknown;
         }> = [];
+        let failedStatuses = 0;
         await Promise.all(
           statuses.map(async (st) => {
             try {
@@ -509,10 +510,16 @@ export class AvitoAdapter implements IAvitoAdapter {
                 if (list.length < 100) break; // последняя страница
               }
             } catch (e) {
+              failedStatuses += 1;
               console.warn(`[AvitoAdapter] fetchItems status=${st} failed:`, e);
             }
           })
         );
+        if (all.length === 0 && failedStatuses > 0) {
+          throw new Error(
+            `Avito не вернул объявления: ошибок по статусам ${failedStatuses}/${statuses.length}`
+          );
+        }
         // Дедупликация по id (на всякий случай)
         const seen = new Set<string>();
         const unique = all.filter((it) => {
