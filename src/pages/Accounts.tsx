@@ -29,10 +29,6 @@ function accountPeriodKey(period: PeriodValue): string {
   return `${period.from}:${period.to}`;
 }
 
-function hasAccountSnapshotForPeriod(account: AccountData, period: PeriodValue): boolean {
-  return Boolean(account.periodCache?.[accountPeriodKey(period)]);
-}
-
 function accountViewForPeriod(account: AccountData, period: PeriodValue): AccountData {
   const snapshot = account.periodCache?.[accountPeriodKey(period)];
   if (!snapshot) return account;
@@ -158,16 +154,7 @@ export default function Accounts() {
   };
 
   const handleStatsPeriodChange = (nextPeriod: PeriodValue) => {
-    const changed = nextPeriod.from !== statsPeriod.from || nextPeriod.to !== statsPeriod.to;
     setStatsPeriod(nextPeriod);
-    if (!changed || syncing) return;
-
-    const needsApiRefresh = apiAccounts.some(
-      (account) => !hasAccountSnapshotForPeriod(account, nextPeriod)
-    );
-    if (needsApiRefresh) {
-      void runBulkSync();
-    }
   };
 
   const saveEditedName = (account: AccountData) => {
