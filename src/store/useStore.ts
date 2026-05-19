@@ -242,17 +242,20 @@ function saveActiveId(id: string | null) {
   if (id) localStorage.setItem(ACTIVE_KEY, id);
   else localStorage.removeItem(ACTIVE_KEY);
 }
+function onlyAvitoLog(entries: ActionLogEntry[]): ActionLogEntry[] {
+  return entries.filter((entry) => entry.source === 'avito');
+}
 function loadLog(): ActionLogEntry[] {
   try {
     const raw = localStorage.getItem(LOG_KEY);
-    return raw ? (JSON.parse(raw) as ActionLogEntry[]) : [];
+    return raw ? onlyAvitoLog(JSON.parse(raw) as ActionLogEntry[]) : [];
   } catch {
     return [];
   }
 }
 function saveLog(entries: ActionLogEntry[]) {
-  // ограничим размер лога 5000 записей
-  const trimmed = entries.slice(-5000);
+  // В журнале оставляем только события Авито и ограничиваем размер.
+  const trimmed = onlyAvitoLog(entries).slice(0, 5000);
   localStorage.setItem(LOG_KEY, JSON.stringify(trimmed));
 }
 function isValidPeriod(value: unknown): value is ReportPeriod {
@@ -691,7 +694,9 @@ export const useStore = create<Store>((set, get) => {
           accs = { [demo.id]: demo };
           accountIds = [demo.id];
         }
-        const remoteLog = await repository.loadActionLog(user.id).catch(() => []);
+        const remoteLog = onlyAvitoLog(
+          await repository.loadActionLog(user.id).catch(() => [])
+        );
         const persistedActive = loadActiveId();
         const activeId =
           persistedActive && accountIds.includes(persistedActive)
@@ -1833,6 +1838,9 @@ export const useStore = create<Store>((set, get) => {
     },
 
     log: (type, title, details, extras) => {
+      const source = extras?.source ?? 'platform';
+      if (source !== 'avito') return;
+
       const userId = get().currentUser?.id ?? 'anonymous';
       const accountId = get().currentAccountId ?? undefined;
       const entry: ActionLogEntry = {
@@ -1841,9 +1849,7 @@ export const useStore = create<Store>((set, get) => {
         userId,
         accountId,
         type,
-        // По умолчанию все действия из стора — действия пользователя на нашей платформе.
-        // События из Авито пишутся через ingestAvitoEvents.
-        source: extras?.source ?? 'platform',
+        source,
         title,
         details,
         before: extras?.before,
