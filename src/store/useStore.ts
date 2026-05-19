@@ -508,7 +508,7 @@ async function hydrateAccountPeriodFromDailyCache(
     repository.loadItemDailyStats(acc.id, period.from, period.to),
     repository.loadAccountDailySpend(acc.id, period.from, period.to),
   ]);
-  const cached = buildCachedPeriodData(acc, itemRows, spendRows);
+  const cached = buildCachedPeriodData(acc, itemRows, spendRows, period);
   if (!cached || cached.metrics.length === 0) return null;
   const itemsWithRec = applyBidRecommendationsToItems(
     cached.items,
@@ -1200,7 +1200,7 @@ export const useStore = create<Store>((set, get) => {
         ]);
         const current = get().accounts[id];
         if (!current) return;
-        const cached = buildCachedPeriodData(current, itemRows, spendRows);
+        const cached = buildCachedPeriodData(current, itemRows, spendRows, period);
         if (!cached || cached.metrics.length === 0) return;
         const itemsWithRec = applyBidRecommendationsToItems(
           cached.items,

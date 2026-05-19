@@ -15,8 +15,18 @@ export type CachedPeriodData = {
   hasPerItemSpend: boolean;
 };
 
+type DateRange = { from: string; to: string };
+
 function round(value: unknown): number {
   return Math.max(0, Math.round(Number(value ?? 0)));
+}
+
+function inRange(date: string, period?: DateRange): boolean {
+  return !period || (date >= period.from && date <= period.to);
+}
+
+function metricKey(metric: Pick<ItemMetrics, 'itemId' | 'date'>): string {
+  return `${metric.itemId}:${metric.date}`;
 }
 
 export function itemDailyStatsFromMetrics(
@@ -140,6 +150,23 @@ export function metricsFromDailyStats(rows: ItemDailyStat[]): ItemMetrics[] {
     .sort((a, b) => a.date.localeCompare(b.date) || a.itemId.localeCompare(b.itemId));
 }
 
+function mergeDailyStatsIntoMetrics(
+  baseMetrics: ItemMetrics[],
+  rows: ItemDailyStat[],
+  period?: DateRange
+): ItemMetrics[] {
+  const byKey = new Map<string, ItemMetrics>();
+  for (const metric of baseMetrics.filter((m) => inRange(m.date, period))) {
+    byKey.set(metricKey(metric), metric);
+  }
+  for (const metric of metricsFromDailyStats(rows)) {
+    byKey.set(metricKey(metric), metric);
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => a.date.localeCompare(b.date) || a.itemId.localeCompare(b.itemId)
+  );
+}
+
 export function itemsFromDailyStats(
   baseItems: AvitoItem[],
   rows: ItemDailyStat[]
@@ -177,6 +204,42 @@ export function itemsFromDailyStats(
   });
 }
 
+function itemsFromMetrics(
+  baseItems: AvitoItem[],
+  metrics: ItemMetrics[],
+  period?: DateRange
+): AvitoItem[] {
+  const byItem = new Map<
+    string,
+    { views: number; impressions: number; contacts: number; favorites: number; spend: number }
+  >();
+
+  for (const row of metrics.filter((m) => inRange(m.date, period))) {
+    const key = String(row.itemId);
+    const cur =
+      byItem.get(key) ?? { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 };
+    cur.views += round(row.views);
+    cur.impressions += round(row.impressions);
+    cur.contacts += round(row.contacts);
+    cur.favorites += round(row.favorites);
+    cur.spend += round(row.spend);
+    byItem.set(key, cur);
+  }
+
+  return baseItems.map((item) => {
+    const totals = byItem.get(String(item.id));
+    if (!totals) return item;
+    return {
+      ...item,
+      views: totals.views,
+      impressions: totals.impressions,
+      contacts: totals.contacts,
+      favorites: totals.favorites,
+      spend: totals.spend,
+    };
+  });
+}
+
 export function hasExactItemSpend(rows: ItemDailyStat[]): boolean {
   const spendRelevantRows = rows.filter(
     (row) => round(row.spend) > 0 || round(row.contacts) > 0
@@ -190,14 +253,21 @@ export function hasExactItemSpend(rows: ItemDailyStat[]): boolean {
 export function buildCachedPeriodData(
   account: AccountData,
   itemRows: ItemDailyStat[],
-  spendRows: AccountDailySpend[]
+  spendRows: AccountDailySpend[],
+  period?: DateRange
 ): CachedPeriodData | null {
   if (itemRows.length === 0 && spendRows.length === 0) return null;
-  const metrics = metricsFromDailyStats(itemRows);
+  const metrics =
+    itemRows.length > 0
+      ? mergeDailyStatsIntoMetrics(account.metrics, itemRows, period)
+      : account.metrics.filter((m) => inRange(m.date, period));
+  const hasBaseRowsOutsideCache = metrics.length > itemRows.length;
   return {
-    items: itemRows.length > 0 ? itemsFromDailyStats(account.items, itemRows) : account.items,
-    metrics: itemRows.length > 0 ? metrics : account.metrics,
+    items: metrics.length > 0 ? itemsFromMetrics(account.items, metrics, period) : account.items,
+    metrics,
     spendings: spendingsFromDailyRows(spendRows) ?? account.spendings ?? null,
-    hasPerItemSpend: hasExactItemSpend(itemRows),
+    hasPerItemSpend: hasBaseRowsOutsideCache
+      ? Boolean(account.hasPerItemSpend)
+      : hasExactItemSpend(itemRows),
   };
 }
