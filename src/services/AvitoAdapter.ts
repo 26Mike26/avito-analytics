@@ -515,9 +515,9 @@ export class AvitoAdapter implements IAvitoAdapter {
             }
           })
         );
-        if (all.length === 0 && failedStatuses > 0) {
+        if (failedStatuses > 0) {
           throw new Error(
-            `Avito не вернул объявления: ошибок по статусам ${failedStatuses}/${statuses.length}`
+            `Avito вернул неполный список объявлений: ошибок по статусам ${failedStatuses}/${statuses.length}`
           );
         }
         // Дедупликация по id (на всякий случай)
