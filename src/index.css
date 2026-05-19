@@ -183,13 +183,20 @@ html.light .bg-accent\/15 { background-color: rgba(255, 106, 0, 0.13) !important
 
 /* Цветной текст в светлой теме — насыщеннее */
 html.light .text-rose-300 { color: #be123c !important; }
+html.light .text-rose-200,
+html.light .text-rose-500 { color: #be123c !important; }
 html.light .text-rose-200\/90 { color: #be123c !important; }
 html.light .text-emerald-300 { color: #047857 !important; }
+html.light .text-emerald-400,
+html.light .text-emerald-500 { color: #047857 !important; }
 html.light .text-emerald-300\/80 { color: #047857 !important; }
 html.light .text-amber-300 { color: #b45309 !important; }
+html.light .text-amber-400,
+html.light .text-amber-600 { color: #b45309 !important; }
 html.light .text-amber-200 { color: #92400e !important; }
 html.light .text-blue-300 { color: #1d4ed8 !important; }
 html.light .text-violet-300 { color: #6d28d9 !important; }
+html.light .text-accent { color: #c2410c !important; }
 
 /* Цветные рамки */
 html.light .border-rose-500\/30 { border-color: rgba(244, 63, 94, 0.45) !important; }
