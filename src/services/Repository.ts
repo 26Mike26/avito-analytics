@@ -432,6 +432,7 @@ class SupabaseRepository implements IRepository {
       .from('action_log')
       .select('*')
       .eq('user_id', userId)
+      .eq('source', 'avito')
       .order('created_at', { ascending: false })
       .limit(2000);
     if (error) throw error;
