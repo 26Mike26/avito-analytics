@@ -45,7 +45,12 @@ export class AuthService {
   }
 
   private saveUsers(users: User[]) {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    try {
+      localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    } catch (error) {
+      console.warn('[storage] Не удалось сохранить пользователей:', error);
+      throw new Error('Не удалось сохранить пользователя: память браузера переполнена.');
+    }
   }
 
   loadSession(): Session | null {
@@ -58,8 +63,13 @@ export class AuthService {
   }
 
   saveSession(s: Session | null) {
-    if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
-    else localStorage.removeItem(SESSION_KEY);
+    try {
+      if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+      else localStorage.removeItem(SESSION_KEY);
+    } catch (error) {
+      console.warn('[storage] Не удалось сохранить сессию:', error);
+      if (s) throw new Error('Не удалось сохранить вход: память браузера переполнена.');
+    }
   }
 
   updateUser(user: User) {
