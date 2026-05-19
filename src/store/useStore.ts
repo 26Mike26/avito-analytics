@@ -239,8 +239,12 @@ function loadActiveId(): string | null {
   return localStorage.getItem(ACTIVE_KEY);
 }
 function saveActiveId(id: string | null) {
-  if (id) localStorage.setItem(ACTIVE_KEY, id);
-  else localStorage.removeItem(ACTIVE_KEY);
+  try {
+    if (id) localStorage.setItem(ACTIVE_KEY, id);
+    else localStorage.removeItem(ACTIVE_KEY);
+  } catch (error) {
+    console.warn('[storage] Не удалось сохранить активный аккаунт:', error);
+  }
 }
 function onlyAvitoLog(entries: ActionLogEntry[]): ActionLogEntry[] {
   return entries.filter((entry) => entry.source === 'avito');
@@ -255,8 +259,19 @@ function loadLog(): ActionLogEntry[] {
 }
 function saveLog(entries: ActionLogEntry[]) {
   // В журнале оставляем только события Авито и ограничиваем размер.
-  const trimmed = onlyAvitoLog(entries).slice(0, 5000);
-  localStorage.setItem(LOG_KEY, JSON.stringify(trimmed));
+  const avitoEntries = onlyAvitoLog(entries);
+  for (const limit of [5000, 1000, 250, 50]) {
+    try {
+      localStorage.setItem(LOG_KEY, JSON.stringify(avitoEntries.slice(0, limit)));
+      return;
+    } catch (error) {
+      if (!isStorageQuotaError(error)) {
+        console.warn('[storage] Не удалось сохранить журнал действий:', error);
+        return;
+      }
+    }
+  }
+  console.warn('[storage] Журнал действий не сохранён: localStorage переполнен.');
 }
 function isValidPeriod(value: unknown): value is ReportPeriod {
   if (!value || typeof value !== 'object') return false;
@@ -274,7 +289,11 @@ function loadAnalyticsPeriod(): ReportPeriod {
   }
 }
 function saveAnalyticsPeriod(period: ReportPeriod) {
-  localStorage.setItem(ANALYTICS_PERIOD_KEY, JSON.stringify(period));
+  try {
+    localStorage.setItem(ANALYTICS_PERIOD_KEY, JSON.stringify(period));
+  } catch (error) {
+    console.warn('[storage] Не удалось сохранить период аналитики:', error);
+  }
 }
 
 function createDemoAccount(ownerId: string, name: string, seed = 0): AccountData {

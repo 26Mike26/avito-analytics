@@ -47,7 +47,11 @@ function loadPreciseCityCache(key: string): Map<string, number> {
 }
 
 function savePreciseCityCache(key: string, values: Map<string, number>) {
-  localStorage.setItem(key, JSON.stringify(Object.fromEntries(values)));
+  try {
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(values)));
+  } catch (error) {
+    console.warn('[storage] Не удалось сохранить точные расходы по городам:', error);
+  }
 }
 
 export default function Analytics() {
