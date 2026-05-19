@@ -1,11 +1,14 @@
 import type {
   AccountData,
+  AccountDailySpend,
   AccountKpi,
   ActionLogEntry,
   AvitoItem,
   BidHistoryEntry,
   IntegrationSettings,
+  ItemDailyStat,
   ItemMetrics,
+  StatsAccuracy,
 } from '../types';
 import { SUPABASE_ENABLED, supabase } from './supabase';
 
@@ -31,11 +34,21 @@ export interface IRepository {
   saveKpi(accountId: string, kpi: AccountKpi): Promise<void>;
   saveIntegration(accountId: string, integration: IntegrationSettings): Promise<void>;
   saveAccountCache(accountId: string, cache: AccountCacheData): Promise<void>;
+  loadItemDailyStats(accountId: string, from: string, to: string): Promise<ItemDailyStat[]>;
+  saveItemDailyStats(accountId: string, stats: ItemDailyStat[]): Promise<void>;
+  loadAccountDailySpend(accountId: string, from: string, to: string): Promise<AccountDailySpend[]>;
+  saveAccountDailySpend(accountId: string, rows: AccountDailySpend[]): Promise<void>;
 
   saveActionLog(entry: ActionLogEntry): Promise<void>;
   loadActionLog(userId: string): Promise<ActionLogEntry[]>;
   clearActionLog(userId: string): Promise<void>;
 }
+
+const ACCURACY_RANK: Record<StatsAccuracy, number> = {
+  fallback: 0,
+  partial: 1,
+  exact: 2,
+};
 
 // ───────────────────────── Supabase реализация ─────────────────────────
 
@@ -254,6 +267,150 @@ class SupabaseRepository implements IRepository {
     }
   }
 
+  async loadItemDailyStats(
+    accountId: string,
+    from: string,
+    to: string
+  ): Promise<ItemDailyStat[]> {
+    const { data, error } = await this.sb
+      .from('item_daily_stats')
+      .select('*')
+      .eq('account_id', accountId)
+      .gte('date', from)
+      .lte('date', to)
+      .order('date', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      accountId: row.account_id,
+      itemId: String(row.item_id),
+      date: row.date,
+      views: Number(row.views ?? 0),
+      impressions: Number(row.impressions ?? 0),
+      contacts: Number(row.contacts ?? 0),
+      favorites: Number(row.favorites ?? 0),
+      spend: Number(row.spend ?? 0),
+      bid: Number(row.bid ?? 0),
+      accuracy: (row.accuracy as StatsAccuracy) ?? 'fallback',
+      updatedAt: row.updated_at ?? undefined,
+    }));
+  }
+
+  async saveItemDailyStats(
+    accountId: string,
+    stats: ItemDailyStat[]
+  ): Promise<void> {
+    if (stats.length === 0) return;
+    const rows = stats.map((row) => ({
+      account_id: accountId,
+      item_id: row.itemId,
+      date: row.date,
+      views: Math.max(0, Math.round(row.views ?? 0)),
+      impressions: Math.max(0, Math.round(row.impressions ?? 0)),
+      contacts: Math.max(0, Math.round(row.contacts ?? 0)),
+      favorites: Math.max(0, Math.round(row.favorites ?? 0)),
+      spend: Math.max(0, Math.round(row.spend ?? 0)),
+      bid: Math.max(0, Math.round(row.bid ?? 0)),
+      accuracy: row.accuracy,
+      updated_at: new Date().toISOString(),
+    }));
+    const from = rows.reduce((min, row) => (row.date < min ? row.date : min), rows[0].date);
+    const to = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
+    const itemIds = Array.from(new Set(rows.map((row) => row.item_id)));
+    const { data: existing, error: existingError } = await this.sb
+      .from('item_daily_stats')
+      .select('item_id,date,accuracy')
+      .eq('account_id', accountId)
+      .in('item_id', itemIds)
+      .gte('date', from)
+      .lte('date', to);
+    if (existingError) throw existingError;
+    const existingAccuracy = new Map(
+      (existing ?? []).map((row) => [
+        `${row.item_id}:${row.date}`,
+        ((row.accuracy as StatsAccuracy) ?? 'fallback') as StatsAccuracy,
+      ])
+    );
+    const upsertRows = rows.filter((row) => {
+      const prev = existingAccuracy.get(`${row.item_id}:${row.date}`);
+      return !prev || ACCURACY_RANK[row.accuracy] >= ACCURACY_RANK[prev];
+    });
+    if (upsertRows.length === 0) return;
+    const { error } = await this.sb
+      .from('item_daily_stats')
+      .upsert(upsertRows, { onConflict: 'account_id,item_id,date' });
+    if (error) throw error;
+  }
+
+  async loadAccountDailySpend(
+    accountId: string,
+    from: string,
+    to: string
+  ): Promise<AccountDailySpend[]> {
+    const { data, error } = await this.sb
+      .from('account_daily_spend')
+      .select('*')
+      .eq('account_id', accountId)
+      .gte('date', from)
+      .lte('date', to)
+      .order('date', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      accountId: row.account_id,
+      date: row.date,
+      promotion: Number(row.promotion ?? 0),
+      presence: Number(row.presence ?? 0),
+      commission: Number(row.commission ?? 0),
+      rest: Number(row.rest ?? 0),
+      ads: Number(row.ads ?? 0),
+      total: Number(row.total ?? 0),
+      accuracy: (row.accuracy as StatsAccuracy) ?? 'fallback',
+      updatedAt: row.updated_at ?? undefined,
+    }));
+  }
+
+  async saveAccountDailySpend(
+    accountId: string,
+    spendRows: AccountDailySpend[]
+  ): Promise<void> {
+    if (spendRows.length === 0) return;
+    const rows = spendRows.map((row) => ({
+      account_id: accountId,
+      date: row.date,
+      promotion: Math.max(0, Math.round(row.promotion ?? 0)),
+      presence: Math.max(0, Math.round(row.presence ?? 0)),
+      commission: Math.max(0, Math.round(row.commission ?? 0)),
+      rest: Math.max(0, Math.round(row.rest ?? 0)),
+      ads: Math.max(0, Math.round(row.ads ?? 0)),
+      total: Math.max(0, Math.round(row.total ?? 0)),
+      accuracy: row.accuracy,
+      updated_at: new Date().toISOString(),
+    }));
+    const from = rows.reduce((min, row) => (row.date < min ? row.date : min), rows[0].date);
+    const to = rows.reduce((max, row) => (row.date > max ? row.date : max), rows[0].date);
+    const { data: existing, error: existingError } = await this.sb
+      .from('account_daily_spend')
+      .select('date,accuracy')
+      .eq('account_id', accountId)
+      .gte('date', from)
+      .lte('date', to);
+    if (existingError) throw existingError;
+    const existingAccuracy = new Map(
+      (existing ?? []).map((row) => [
+        row.date,
+        ((row.accuracy as StatsAccuracy) ?? 'fallback') as StatsAccuracy,
+      ])
+    );
+    const upsertRows = rows.filter((row) => {
+      const prev = existingAccuracy.get(row.date);
+      return !prev || ACCURACY_RANK[row.accuracy] >= ACCURACY_RANK[prev];
+    });
+    if (upsertRows.length === 0) return;
+    const { error } = await this.sb
+      .from('account_daily_spend')
+      .upsert(upsertRows, { onConflict: 'account_id,date' });
+    if (error) throw error;
+  }
+
   async saveActionLog(entry: ActionLogEntry): Promise<void> {
     const { error } = await this.sb.from('action_log').insert({
       id: entry.id,
@@ -315,6 +472,14 @@ class LocalRepository implements IRepository {
   async saveKpi() {}
   async saveIntegration() {}
   async saveAccountCache() {}
+  async loadItemDailyStats() {
+    return [];
+  }
+  async saveItemDailyStats() {}
+  async loadAccountDailySpend() {
+    return [];
+  }
+  async saveAccountDailySpend() {}
   async saveActionLog() {}
   async loadActionLog() {
     return [];

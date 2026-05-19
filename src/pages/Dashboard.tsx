@@ -32,6 +32,7 @@ import {
   regionAverages,
   scaleKpiForPeriod,
 } from '../lib/analytics';
+import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
 import { MapPin } from 'lucide-react';
 
 type PreciseStats = {
@@ -56,6 +57,7 @@ export default function Dashboard() {
   const spendings = useStore((s) => s.spendings);
   const adapter = useStore((s) => s.adapter);
   const currentAccountId = useStore((s) => s.currentAccountId);
+  const saveExactItemDailyStats = useStore((s) => s.saveExactItemDailyStats);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
   const periodKpi = useMemo(
@@ -407,20 +409,29 @@ export default function Dashboard() {
       const key = String(id);
       const fallback = fallbackById.get(key);
       const row = metricsById.get(key);
-      const exactSpend = await adapter.fetchAdsForItems({
+      const exactSpendRows = await adapter.fetchAdsForItemsByDate({
         dateFrom: period.from,
         dateTo: period.to,
         itemIds: [id],
       });
-      if (!exactSpend) failedSpend += 1;
+      if (!exactSpendRows) failedSpend += 1;
+      const exactSpend = exactSpendRows
+        ? exactSpendRows.reduce((sum, row) => sum + Number(row.total ?? 0), 0)
+        : null;
 
       next.set(key, {
         views: Number(row?.views ?? fallback?.views ?? 0),
         impressions: Number(row?.impressions ?? fallback?.impressions ?? 0),
         contacts: Number(row?.contacts ?? fallback?.contacts ?? 0),
         favorites: Number(row?.favorites ?? fallback?.favorites ?? 0),
-        spend: exactSpend ? Math.round(exactSpend.total) : Number(fallback?.spend ?? 0),
+        spend: exactSpend != null ? Math.round(exactSpend) : Number(fallback?.spend ?? 0),
       });
+      if (currentAccountId && exactSpendRows) {
+        void saveExactItemDailyStats(
+          itemDailyStatsFromExactSpendRows(currentAccountId, key, metrics, exactSpendRows),
+          period
+        );
+      }
       setPreciseItemStats(new Map(next));
       setPreciseItemsProgress({
         busy: true,

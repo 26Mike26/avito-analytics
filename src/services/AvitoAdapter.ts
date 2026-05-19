@@ -206,6 +206,8 @@ export type SpendingsBreakdown = {
     date: string;
     promotion: number;
     presence: number;
+    commission: number;
+    rest: number;
     /** ads = promotion + presence (то, что считается рекламным расходом). */
     ads: number;
     total: number;
@@ -1245,16 +1247,16 @@ export class AvitoAdapter implements IAvitoAdapter {
         }
         const promo = Number(map.promotion ?? 0);
         const pres = Number(map.presence ?? 0);
+        const commission = Number(map.commission ?? 0);
+        const rest = Number(map.rest ?? 0);
         byDate.push({
           date: g.date,
           promotion: promo,
           presence: pres,
+          commission,
+          rest,
           ads: promo + pres,
-          total:
-            promo +
-            pres +
-            Number(map.commission ?? 0) +
-            Number(map.rest ?? 0),
+          total: promo + pres + commission + rest,
         });
       }
       const total =

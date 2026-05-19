@@ -53,6 +53,35 @@ export type ItemMetrics = {
   bid: number;
 };
 
+export type StatsAccuracy = 'exact' | 'partial' | 'fallback';
+
+export type ItemDailyStat = {
+  accountId?: string;
+  itemId: string;
+  date: string;
+  views: number;
+  impressions: number;
+  contacts: number;
+  favorites: number;
+  spend: number;
+  bid: number;
+  accuracy: StatsAccuracy;
+  updatedAt?: string;
+};
+
+export type AccountDailySpend = {
+  accountId?: string;
+  date: string;
+  promotion: number;
+  presence: number;
+  commission: number;
+  rest: number;
+  ads: number;
+  total: number;
+  accuracy: StatsAccuracy;
+  updatedAt?: string;
+};
+
 export type RecommendationPriority = 'high' | 'medium' | 'low';
 export type RecommendationType =
   | 'bid'
@@ -139,6 +168,8 @@ export type AccountPeriodCacheEntry = {
       date: string;
       promotion: number;
       presence: number;
+      commission?: number;
+      rest?: number;
       ads: number;
       total: number;
     }>;
@@ -186,6 +217,8 @@ export type AccountData = {
       date: string;
       promotion: number;
       presence: number;
+      commission?: number;
+      rest?: number;
       ads: number;
       total: number;
     }>;

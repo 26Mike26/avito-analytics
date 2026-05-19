@@ -9,6 +9,7 @@ import type {
   AvitoItem,
   BidHistoryEntry,
   IntegrationSettings,
+  ItemDailyStat,
   ItemMetrics,
   Recommendation,
   Session,
@@ -34,6 +35,11 @@ import {
 } from '../services/AvitoAdapter';
 import { authService } from '../services/AuthService';
 import { repository } from '../services/Repository';
+import {
+  accountDailySpendFromSpendings,
+  buildCachedPeriodData,
+  itemDailyStatsFromMetrics,
+} from '../services/StatsCacheService';
 import { SUPABASE_ENABLED } from '../services/supabase';
 
 const ACCOUNTS_KEY = 'avito-app-accounts';
@@ -319,6 +325,10 @@ type Store = {
   setNote: (itemId: string, text: string) => void;
   updateIntegration: (s: Partial<IntegrationSettings>) => void;
   ensureItemImages: (itemIds: string[]) => Promise<void>;
+  saveExactItemDailyStats: (
+    rows: ItemDailyStat[],
+    period?: ReportPeriod
+  ) => Promise<void>;
   reloadFromAdapter: () => Promise<void>;
   applyImportedData: (items: AvitoItem[], metrics: ItemMetrics[]) => void;
   resetToDemo: () => Promise<void>;
@@ -451,6 +461,26 @@ function withPeriodSnapshot(acc: AccountData, period: ReportPeriod): AccountData
   };
 }
 
+function withPeriodSnapshotData(
+  acc: AccountData,
+  period: ReportPeriod,
+  snapshot: Omit<AccountPeriodCacheEntry, 'from' | 'to' | 'savedAt'>
+): AccountData {
+  const key = periodCacheKey(period);
+  return {
+    ...acc,
+    periodCache: compactPeriodCache({
+      ...(acc.periodCache ?? {}),
+      [key]: {
+        from: period.from,
+        to: period.to,
+        savedAt: new Date().toISOString(),
+        ...snapshot,
+      },
+    }),
+  };
+}
+
 function buildMirrorForPeriod(acc: AccountData, period: ReportPeriod) {
   const snapshot = acc.periodCache?.[periodCacheKey(period)];
   if (!snapshot) return buildMirror(acc);
@@ -526,6 +556,45 @@ export const useStore = create<Store>((set, get) => {
         analyticsPeriod: period,
         ...(acc ? buildMirrorForPeriod(acc, period) : {}),
       });
+      if (!id || !acc || !SUPABASE_ENABLED) return;
+      void (async () => {
+        try {
+          const [itemRows, spendRows] = await Promise.all([
+            repository.loadItemDailyStats(id, period.from, period.to),
+            repository.loadAccountDailySpend(id, period.from, period.to),
+          ]);
+          const latest = get().accounts[id];
+          if (!latest || get().currentAccountId !== id) return;
+          const cached = buildCachedPeriodData(latest, itemRows, spendRows);
+          if (!cached || cached.metrics.length === 0) return;
+          const itemsWithRec = applyBidRecommendationsToItems(
+            cached.items,
+            latest.kpi,
+            cached.metrics
+          );
+          const recs = buildRecommendations(itemsWithRec, latest.kpi, cached.metrics);
+          const updated = withPeriodSnapshotData(latest, period, {
+            items: itemsWithRec,
+            metrics: cached.metrics,
+            recommendations: recs,
+            accountCharges: latest.accountCharges ?? [],
+            hasPerItemSpend: cached.hasPerItemSpend,
+            spendings: cached.spendings,
+          });
+          const nextAccs = { ...get().accounts, [id]: updated };
+          saveAccounts(nextAccs);
+          set({
+            accounts: nextAccs,
+            ...(get().currentAccountId === id &&
+            get().analyticsPeriod.from === period.from &&
+            get().analyticsPeriod.to === period.to
+              ? buildMirrorForPeriod(updated, period)
+              : {}),
+          });
+        } catch (e) {
+          console.warn('[stats-cache] load period:', e);
+        }
+      })();
     },
 
     bootstrap: async () => {
@@ -587,6 +656,7 @@ export const useStore = create<Store>((set, get) => {
           initialized: true,
         });
         adapter.setSettings(acc.integration);
+        get().setAnalyticsPeriod(get().analyticsPeriod);
         return;
       }
 
@@ -823,6 +893,7 @@ export const useStore = create<Store>((set, get) => {
       });
       adapter.setSettings(acc.integration);
       get().log('account_switched', `Переключение на аккаунт «${acc.name}»`);
+      get().setAnalyticsPeriod(get().analyticsPeriod);
       // Фоново освежаем runtime-данные, но старый кеш аккаунта остаётся на экране.
       void (async () => {
         const scopedAdapter = new AvitoAdapter(acc.integration);
@@ -1011,6 +1082,18 @@ export const useStore = create<Store>((set, get) => {
             try {
               await repository.saveItems(id, itemsWithRec);
               await repository.saveMetrics(id, metrics);
+              await repository.saveItemDailyStats(
+                id,
+                itemDailyStatsFromMetrics(
+                  id,
+                  metrics,
+                  nextHasPerItemSpend ? 'exact' : 'partial'
+                )
+              );
+              await repository.saveAccountDailySpend(
+                id,
+                accountDailySpendFromSpendings(id, nextSpendings)
+              );
               await repository.saveIntegration(id, updatedWithCache.integration);
               await repository.saveAccountCache(id, updatedWithCache);
             } catch (e) {
@@ -1100,6 +1183,52 @@ export const useStore = create<Store>((set, get) => {
           console.warn('[supabase] ensureItemImages:', e);
         }
       })();
+    },
+
+    saveExactItemDailyStats: async (rows, periodArg) => {
+      const id = get().currentAccountId;
+      if (!id || rows.length === 0) return;
+      const period = periodArg ?? get().analyticsPeriod;
+      try {
+        await repository.saveItemDailyStats(id, rows);
+        const [itemRows, spendRows] = await Promise.all([
+          repository.loadItemDailyStats(id, period.from, period.to),
+          repository.loadAccountDailySpend(id, period.from, period.to),
+        ]);
+        const current = get().accounts[id];
+        if (!current) return;
+        const cached = buildCachedPeriodData(current, itemRows, spendRows);
+        if (!cached || cached.metrics.length === 0) return;
+        const itemsWithRec = applyBidRecommendationsToItems(
+          cached.items,
+          current.kpi,
+          cached.metrics
+        );
+        const recs = buildRecommendations(itemsWithRec, current.kpi, cached.metrics);
+        const updated = withPeriodSnapshotData(current, period, {
+          items: itemsWithRec,
+          metrics: cached.metrics,
+          recommendations: recs,
+          accountCharges: current.accountCharges ?? [],
+          hasPerItemSpend: cached.hasPerItemSpend,
+          spendings: cached.spendings,
+        });
+        const accs = { ...get().accounts, [id]: updated };
+        saveAccounts(accs);
+        set({
+          accounts: accs,
+          ...(get().currentAccountId === id &&
+          get().analyticsPeriod.from === period.from &&
+          get().analyticsPeriod.to === period.to
+            ? buildMirrorForPeriod(updated, period)
+            : {}),
+        });
+        void repository.saveAccountCache(id, updated).catch((e) =>
+          console.warn('[supabase] saveExactItemDailyStats account cache:', e)
+        );
+      } catch (e) {
+        console.warn('[stats-cache] save exact item daily stats:', e);
+      }
     },
 
     setKpi: (k) => {
@@ -1509,6 +1638,18 @@ export const useStore = create<Store>((set, get) => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
+          await repository.saveItemDailyStats(
+            id,
+            itemDailyStatsFromMetrics(
+              id,
+              metrics,
+              nextHasPerItemSpend ? 'exact' : 'partial'
+            )
+          );
+          await repository.saveAccountDailySpend(
+            id,
+            accountDailySpendFromSpendings(id, nextSpendings)
+          );
           await repository.saveIntegration(id, updatedWithCache.integration);
           await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {
@@ -1578,6 +1719,10 @@ export const useStore = create<Store>((set, get) => {
         try {
           await repository.saveItems(id, itemsWithRec);
           await repository.saveMetrics(id, metrics);
+          await repository.saveItemDailyStats(
+            id,
+            itemDailyStatsFromMetrics(id, metrics, 'exact')
+          );
           await repository.saveIntegration(id, updatedWithCache.integration);
           await repository.saveAccountCache(id, updatedWithCache);
         } catch (e) {

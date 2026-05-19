@@ -103,6 +103,43 @@ create table if not exists public.account_cache (
 create index if not exists account_cache_updated_idx
   on public.account_cache(updated_at desc);
 
+create table if not exists public.item_daily_stats (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  item_id text not null,
+  date date not null,
+  views integer not null default 0,
+  impressions integer not null default 0,
+  contacts integer not null default 0,
+  favorites integer not null default 0,
+  spend numeric not null default 0,
+  bid numeric not null default 0,
+  accuracy text not null default 'fallback'
+    check (accuracy in ('exact','partial','fallback')),
+  updated_at timestamptz not null default now(),
+  primary key (account_id, item_id, date)
+);
+create index if not exists item_daily_stats_account_date_idx
+  on public.item_daily_stats(account_id, date);
+create index if not exists item_daily_stats_accuracy_idx
+  on public.item_daily_stats(account_id, accuracy);
+
+create table if not exists public.account_daily_spend (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  date date not null,
+  promotion numeric not null default 0,
+  presence numeric not null default 0,
+  commission numeric not null default 0,
+  rest numeric not null default 0,
+  ads numeric not null default 0,
+  total numeric not null default 0,
+  accuracy text not null default 'fallback'
+    check (accuracy in ('exact','partial','fallback')),
+  updated_at timestamptz not null default now(),
+  primary key (account_id, date)
+);
+create index if not exists account_daily_spend_account_date_idx
+  on public.account_daily_spend(account_id, date);
+
 -- ─── Миграция для существующих БД (можно прогонять повторно) ───
 -- Если таблица уже создана без поля source, добавим колонку без падения.
 alter table public.action_log
@@ -118,6 +155,8 @@ alter table public.bid_history enable row level security;
 alter table public.notes enable row level security;
 alter table public.action_log enable row level security;
 alter table public.account_cache enable row level security;
+alter table public.item_daily_stats enable row level security;
+alter table public.account_daily_spend enable row level security;
 
 -- accounts: пользователь видит/изменяет только свои аккаунты
 drop policy if exists "accounts owners only" on public.accounts;
@@ -173,6 +212,22 @@ create policy "account_cache via account" on public.account_cache
                  where a.id = account_cache.account_id and a.owner_id = auth.uid()))
   with check (exists (select 1 from public.accounts a
                       where a.id = account_cache.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "item_daily_stats via account" on public.item_daily_stats;
+create policy "item_daily_stats via account" on public.item_daily_stats
+  for all
+  using (exists (select 1 from public.accounts a
+                 where a.id = item_daily_stats.account_id and a.owner_id = auth.uid()))
+  with check (exists (select 1 from public.accounts a
+                      where a.id = item_daily_stats.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "account_daily_spend via account" on public.account_daily_spend;
+create policy "account_daily_spend via account" on public.account_daily_spend
+  for all
+  using (exists (select 1 from public.accounts a
+                 where a.id = account_daily_spend.account_id and a.owner_id = auth.uid()))
+  with check (exists (select 1 from public.accounts a
+                      where a.id = account_daily_spend.account_id and a.owner_id = auth.uid()));
 
 -- ─────────────────────────── ПОДСКАЗКА ───────────────────────
 -- После применения: Supabase → Authentication → Sign Up users в UI.
