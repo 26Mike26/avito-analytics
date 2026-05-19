@@ -548,8 +548,8 @@ export class AvitoAdapter implements IAvitoAdapter {
           imageUrl: findImageUrl(it),
         }));
       } catch (e) {
-        console.warn('[AvitoAdapter] fetchItems API error, fallback на demo:', e);
-        return generateMockItems();
+        console.warn('[AvitoAdapter] fetchItems API error:', e);
+        throw e;
       }
     }
     return generateMockItems();
@@ -781,8 +781,8 @@ export class AvitoAdapter implements IAvitoAdapter {
         }
         return out;
       } catch (e) {
-        console.warn('[AvitoAdapter] fetchMetrics API error, fallback на demo:', e);
-        return generateMetricsForItems(items);
+        console.warn('[AvitoAdapter] fetchMetrics API error:', e);
+        throw e;
       }
     }
     return generateMetricsForItems(items);

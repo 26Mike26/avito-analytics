@@ -1557,6 +1557,7 @@ export const useStore = create<Store>((set, get) => {
       const scopedAdapter = new AvitoAdapter(accAtStart.integration);
       const syncPeriod = get().analyticsPeriod;
       set({ loading: true });
+      try {
       // Запоминаем предыдущий снимок объявлений — будем сравнивать после fetch
       // и логировать изменения как события Авито (новые/снятые/изменённые).
       const prevItems = accAtStart.items;
@@ -1706,6 +1707,10 @@ export const useStore = create<Store>((set, get) => {
         }
       })();
       get().log('data_reloaded', 'Синхронизация данных из интеграции');
+      } catch (e) {
+        console.warn('[adapter] reloadFromAdapter failed:', e);
+        set({ loading: false });
+      }
     },
 
     applyImportedData: (items, metrics) => {
