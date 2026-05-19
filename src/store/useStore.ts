@@ -150,6 +150,39 @@ function lightweightAccountsForLocalStorage(
   );
 }
 
+function supabaseMirrorAccountsForLocalStorage(
+  map: Record<string, AccountData>
+): Record<string, AccountData> {
+  return Object.fromEntries(
+    Object.entries(map).map(([id, account]) => [
+      id,
+      {
+        ...account,
+        // В Supabase-режиме источником правды остаётся база. В браузере держим
+        // только лёгкий индекс аккаунтов без тяжёлой статистики и API-секретов.
+        integration: {
+          ...account.integration,
+          clientSecret: '',
+          accessToken: '',
+        },
+        items: [],
+        metrics: [],
+        bidHistory: [],
+        notes: {},
+        recommendations: [],
+        periodCache: undefined,
+        accountCharges: (account.accountCharges ?? []).slice(-30),
+        spendings: account.spendings
+          ? {
+              ...account.spendings,
+              byDate: account.spendings.byDate.slice(-30),
+            }
+          : account.spendings,
+      },
+    ])
+  );
+}
+
 function trySaveAccountsMap(map: Record<string, AccountData>): boolean {
   try {
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(map));
@@ -161,6 +194,14 @@ function trySaveAccountsMap(map: Record<string, AccountData>): boolean {
 }
 
 function saveAccounts(map: Record<string, AccountData>) {
+  if (SUPABASE_ENABLED) {
+    if (trySaveAccountsMap(supabaseMirrorAccountsForLocalStorage(map))) return;
+    console.warn(
+      '[storage] Не удалось сохранить легкое зеркало аккаунтов Supabase в localStorage.'
+    );
+    return;
+  }
+
   if (trySaveAccountsMap(map)) return;
 
   const compacted = compactAccountsForLocalStorage(
