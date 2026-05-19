@@ -392,9 +392,16 @@ export default function Analytics() {
     .filter((i) => i.contacts > 0)
     .sort((a, b) => (calcCpl(a.spend, a.contacts) ?? 0) - (calcCpl(b.spend, b.contacts) ?? 0))
     .slice(0, 5);
+  const topItemIds = new Set(top.map((i) => String(i.id)));
   const bottom = [...filteredItems]
-    .filter((i) => i.spend > 0)
-    .sort((a, b) => (calcCpl(b.spend, b.contacts) ?? 0) - (calcCpl(a.spend, a.contacts) ?? 0))
+    .filter((i) => i.spend > 0 && !topItemIds.has(String(i.id)))
+    .sort((a, b) => {
+      const aCpl = calcCpl(a.spend, a.contacts);
+      const bCpl = calcCpl(b.spend, b.contacts);
+      if (aCpl == null && bCpl != null) return -1;
+      if (bCpl == null && aCpl != null) return 1;
+      return (bCpl ?? 0) - (aCpl ?? 0);
+    })
     .slice(0, 5);
 
   return (
