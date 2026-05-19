@@ -389,7 +389,7 @@ export default function Analytics() {
   );
 
   const top = [...filteredItems]
-    .filter((i) => i.contacts > 0)
+    .filter((i) => i.spend > 0 && i.contacts > 0)
     .sort((a, b) => (calcCpl(a.spend, a.contacts) ?? 0) - (calcCpl(b.spend, b.contacts) ?? 0))
     .slice(0, 5);
   const topItemIds = new Set(top.map((i) => String(i.id)));
