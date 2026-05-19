@@ -19,6 +19,7 @@ import { useStore } from '../store/useStore';
 import {
   aggregateMetricsByDate,
   calcCpl,
+  calcCtr,
   calculateAccountStats,
   categoryAverages,
   formatNumber,
@@ -565,14 +566,18 @@ export default function Analytics() {
                 Лидеры
               </div>
               <ul className="space-y-1.5">
-                {top.map((it) => (
-                  <li key={it.id} className="text-sm flex items-center justify-between">
-                    <span className="truncate">{it.title}</span>
-                    <span className="text-xs text-emerald-300">
-                      {formatRub(calcCpl(it.spend, it.contacts) ?? 0)}
-                    </span>
-                  </li>
-                ))}
+                {top.map((it) => {
+                  const cpl = calcCpl(it.spend, it.contacts);
+                  const ctr = calcCtr(it.views, it.impressions);
+                  return (
+                    <li key={it.id} className="text-sm flex items-center justify-between gap-3">
+                      <span className="truncate">{it.title}</span>
+                      <span className="text-xs text-emerald-300 shrink-0 text-right">
+                        {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'CPL —'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
             <div>
@@ -580,16 +585,18 @@ export default function Analytics() {
                 Аутсайдеры
               </div>
               <ul className="space-y-1.5">
-                {bottom.map((it) => (
-                  <li key={it.id} className="text-sm flex items-center justify-between">
-                    <span className="truncate">{it.title}</span>
-                    <span className="text-xs text-rose-300">
-                      {it.contacts > 0
-                        ? formatRub(calcCpl(it.spend, it.contacts) ?? 0)
-                        : 'нет лидов'}
-                    </span>
-                  </li>
-                ))}
+                {bottom.map((it) => {
+                  const cpl = calcCpl(it.spend, it.contacts);
+                  const ctr = calcCtr(it.views, it.impressions);
+                  return (
+                    <li key={it.id} className="text-sm flex items-center justify-between gap-3">
+                      <span className="truncate">{it.title}</span>
+                      <span className="text-xs text-rose-300 shrink-0 text-right">
+                        {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'нет лидов'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </div>
