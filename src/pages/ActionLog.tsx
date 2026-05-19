@@ -99,6 +99,17 @@ const TOPUP_TYPES: ActionType[] = ['avito_balance_topup'];
 const PUBLISH_TYPES: ActionType[] = ['avito_item_published'];
 const ITEM_CHANGE_TYPES: ActionType[] = ['avito_item_archived', 'avito_item_edited'];
 const COMM_TYPES: ActionType[] = ['avito_message_received', 'avito_call_received', 'avito_review_received'];
+
+function isAvitoBidChange(entry: ActionLogEntry) {
+  if (entry.type === 'item_bid_changed' || entry.type === 'item_bid_bulk_applied') {
+    return true;
+  }
+  if (entry.type !== 'avito_item_edited') return false;
+  const beforeBid = (entry.before as { currentBid?: unknown } | undefined)?.currentBid;
+  const afterBid = (entry.after as { currentBid?: unknown } | undefined)?.currentBid;
+  return beforeBid !== afterBid || /ставк/i.test(entry.title + ' ' + (entry.details ?? ''));
+}
+
 function inPeriod(entry: ActionLogEntry, period: PeriodValue) {
   const day = entry.timestamp.slice(0, 10);
   return day >= period.from && day <= period.to;
@@ -155,7 +166,7 @@ function section(
 
 function buildWorkReport(entries: ActionLogEntry[], accountName: string, period: PeriodValue): WorkReport {
   const sorted = [...entries].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const bidChanges = sorted.filter((e) => BID_TYPES.includes(e.type));
+  const bidChanges = sorted.filter((e) => isAvitoBidChange(e) && !BULK_BID_TYPES.includes(e.type));
   const bulkBidChanges = sorted.filter((e) => BULK_BID_TYPES.includes(e.type));
   const topups = sorted.filter((e) => TOPUP_TYPES.includes(e.type));
   const promotions = sorted.filter(
@@ -168,7 +179,7 @@ function buildWorkReport(entries: ActionLogEntry[], accountName: string, period:
     (e) => e.type === 'avito_balance_charge' && !promotions.some((p) => p.id === e.id)
   );
   const itemPublishes = sorted.filter((e) => PUBLISH_TYPES.includes(e.type));
-  const itemChanges = sorted.filter((e) => ITEM_CHANGE_TYPES.includes(e.type));
+  const itemChanges = sorted.filter((e) => ITEM_CHANGE_TYPES.includes(e.type) && !isAvitoBidChange(e));
   const communications = sorted.filter((e) => COMM_TYPES.includes(e.type));
 
   const bidSummary = [
