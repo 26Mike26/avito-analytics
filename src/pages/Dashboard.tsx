@@ -33,6 +33,7 @@ import {
   scaleKpiForPeriod,
 } from '../lib/analytics';
 import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
+import { repository } from '../services/Repository';
 import { MapPin } from 'lucide-react';
 
 type PreciseStats = {
@@ -195,6 +196,85 @@ export default function Dashboard() {
       }),
     [periodItems, preciseItemStats]
   );
+
+  useEffect(() => {
+    if (!currentAccountId || periodItems.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const rows = await repository.loadItemDailyStats(
+          currentAccountId,
+          period.from,
+          period.to
+        );
+        if (cancelled) return;
+
+        const exactRows = rows.filter((row) => row.accuracy === 'exact');
+        if (exactRows.length === 0) return;
+
+        const exactSpendByItem = new Map<string, number>();
+        for (const row of exactRows) {
+          const key = String(row.itemId);
+          exactSpendByItem.set(
+            key,
+            (exactSpendByItem.get(key) ?? 0) + Number(row.spend ?? 0)
+          );
+        }
+
+        const fallbackById = new Map(periodItems.map((item) => [String(item.id), item]));
+        const itemMap = new Map<string, PreciseItemStats>();
+        for (const [itemId, spend] of exactSpendByItem.entries()) {
+          const fallback = fallbackById.get(itemId);
+          if (!fallback) continue;
+          itemMap.set(itemId, {
+            views: Number(fallback.views ?? 0),
+            impressions: Number(fallback.impressions ?? 0),
+            contacts: Number(fallback.contacts ?? 0),
+            favorites: Number(fallback.favorites ?? 0),
+            spend: Math.round(spend),
+          });
+        }
+        if (itemMap.size === 0) return;
+
+        const cityIds = new Map<string, string[]>();
+        for (const item of periodItems) {
+          if (!itemHasPeriodData(item)) continue;
+          const key = String(item.id);
+          cityIds.set(item.region, [...(cityIds.get(item.region) ?? []), key]);
+        }
+        const cityMap = new Map<string, PreciseCityStats>();
+        for (const [region, ids] of cityIds.entries()) {
+          if (ids.length === 0 || !ids.every((id) => itemMap.has(id))) continue;
+          const stats = ids.reduce(
+            (acc, id) => {
+              const item = itemMap.get(id);
+              if (!item) return acc;
+              return {
+                views: acc.views + item.views,
+                impressions: acc.impressions + item.impressions,
+                contacts: acc.contacts + item.contacts,
+                favorites: acc.favorites + item.favorites,
+                spend: acc.spend + item.spend,
+              };
+            },
+            { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
+          );
+          cityMap.set(region, stats);
+        }
+
+        setPreciseItemStats(itemMap);
+        setPreciseCityStats(cityMap);
+      } catch (e) {
+        console.warn('[stats-cache] restore dashboard precise stats:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAccountId, period.from, period.to, periodItems]);
+
   const stats = calculateAccountStats(items, periodKpi);
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
@@ -1122,6 +1202,22 @@ function groupLabel(t: string) {
     default:
       return 'Аккаунт';
   }
+}
+
+function itemHasPeriodData(item: {
+  views?: number;
+  impressions?: number;
+  contacts?: number;
+  favorites?: number;
+  spend?: number;
+}) {
+  return (
+    Number(item.views ?? 0) > 0 ||
+    Number(item.impressions ?? 0) > 0 ||
+    Number(item.contacts ?? 0) > 0 ||
+    Number(item.favorites ?? 0) > 0 ||
+    Number(item.spend ?? 0) > 0
+  );
 }
 
 function BalanceCard({
