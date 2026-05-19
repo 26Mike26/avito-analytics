@@ -1567,9 +1567,10 @@ export class AvitoAdapter implements IAvitoAdapter {
           .filter((e) => e.timestamp);
       } catch (e) {
         console.warn(
-          '[AvitoAdapter] fetchAvitoEvents API error, fallback на demo:',
+          '[AvitoAdapter] fetchAvitoEvents API error:',
           e
         );
+        return [];
       }
     }
     const now = Date.now();
