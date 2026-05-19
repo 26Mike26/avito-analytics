@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -63,6 +63,7 @@ export default function Accounts() {
   const removeAccount = useStore((s) => s.removeAccount);
   const switchAccount = useStore((s) => s.switchAccount);
   const syncAllApiAccounts = useStore((s) => s.syncAllApiAccounts);
+  const hydratePeriodCacheForAccounts = useStore((s) => s.hydratePeriodCacheForAccounts);
   const statsPeriod = useStore((s) => s.analyticsPeriod);
   const setStatsPeriod = useStore((s) => s.setAnalyticsPeriod);
 
@@ -70,6 +71,7 @@ export default function Accounts() {
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [cacheLoading, setCacheLoading] = useState(false);
   const [syncResults, setSyncResults] = useState<AccountApiSyncResult[]>([]);
 
   const userAccounts = useMemo(
@@ -86,6 +88,25 @@ export default function Accounts() {
     () => userAccounts.filter((a) => a.integration.mode === 'api'),
     [userAccounts]
   );
+  const accountIdsKey = user ? user.accountIds.join('|') : '';
+
+  useEffect(() => {
+    if (!user || user.accountIds.length === 0) return;
+    let cancelled = false;
+    setCacheLoading(true);
+    void hydratePeriodCacheForAccounts(statsPeriod, user.accountIds).finally(() => {
+      if (!cancelled) setCacheLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accountIdsKey,
+    hydratePeriodCacheForAccounts,
+    statsPeriod.from,
+    statsPeriod.to,
+    user,
+  ]);
 
   const accountStats = useMemo<AccountStatsRow[]>(
     () =>
@@ -240,6 +261,11 @@ export default function Accounts() {
                 <p className="text-sm text-ink-400 mt-1">
                   Управление аккаунтами и сводка по затратам, лидам, CPL и выполнению KPI в одной таблице.
                 </p>
+                {cacheLoading && (
+                  <div className="text-xs text-blue-300 mt-2">
+                    Читаю сохранённую статистику из кеша периода...
+                  </div>
+                )}
               </div>
             </div>
             <PeriodPicker value={statsPeriod} onChange={handleStatsPeriodChange} className="xl:justify-end" />

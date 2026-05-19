@@ -312,6 +312,10 @@ type Store = {
   removeAccount: (id: string) => void;
   switchAccount: (id: string) => void;
   syncAllApiAccounts: () => Promise<AccountApiSyncResult[]>;
+  hydratePeriodCacheForAccounts: (
+    period?: ReportPeriod,
+    accountIds?: string[]
+  ) => Promise<void>;
 
   // ───── KPI / данные / рекомендации (текущий аккаунт)
   init: () => Promise<void>;
@@ -495,6 +499,33 @@ function buildMirrorForPeriod(acc: AccountData, period: ReportPeriod) {
   };
 }
 
+async function hydrateAccountPeriodFromDailyCache(
+  acc: AccountData,
+  period: ReportPeriod
+): Promise<AccountData | null> {
+  if (!SUPABASE_ENABLED) return null;
+  const [itemRows, spendRows] = await Promise.all([
+    repository.loadItemDailyStats(acc.id, period.from, period.to),
+    repository.loadAccountDailySpend(acc.id, period.from, period.to),
+  ]);
+  const cached = buildCachedPeriodData(acc, itemRows, spendRows);
+  if (!cached || cached.metrics.length === 0) return null;
+  const itemsWithRec = applyBidRecommendationsToItems(
+    cached.items,
+    acc.kpi,
+    cached.metrics
+  );
+  const recs = buildRecommendations(itemsWithRec, acc.kpi, cached.metrics);
+  return withPeriodSnapshotData(acc, period, {
+    items: itemsWithRec,
+    metrics: cached.metrics,
+    recommendations: recs,
+    accountCharges: acc.accountCharges ?? [],
+    hasPerItemSpend: cached.hasPerItemSpend,
+    spendings: cached.spendings,
+  });
+}
+
 function enrichItemsFromMetrics(items: AvitoItem[], metrics: ItemMetrics[]): AvitoItem[] {
   return items.map((it) => {
     const itemMetrics = metrics.filter((m) => m.itemId === it.id);
@@ -559,28 +590,10 @@ export const useStore = create<Store>((set, get) => {
       if (!id || !acc || !SUPABASE_ENABLED) return;
       void (async () => {
         try {
-          const [itemRows, spendRows] = await Promise.all([
-            repository.loadItemDailyStats(id, period.from, period.to),
-            repository.loadAccountDailySpend(id, period.from, period.to),
-          ]);
           const latest = get().accounts[id];
           if (!latest || get().currentAccountId !== id) return;
-          const cached = buildCachedPeriodData(latest, itemRows, spendRows);
-          if (!cached || cached.metrics.length === 0) return;
-          const itemsWithRec = applyBidRecommendationsToItems(
-            cached.items,
-            latest.kpi,
-            cached.metrics
-          );
-          const recs = buildRecommendations(itemsWithRec, latest.kpi, cached.metrics);
-          const updated = withPeriodSnapshotData(latest, period, {
-            items: itemsWithRec,
-            metrics: cached.metrics,
-            recommendations: recs,
-            accountCharges: latest.accountCharges ?? [],
-            hasPerItemSpend: cached.hasPerItemSpend,
-            spendings: cached.spendings,
-          });
+          const updated = await hydrateAccountPeriodFromDailyCache(latest, period);
+          if (!updated) return;
           const nextAccs = { ...get().accounts, [id]: updated };
           saveAccounts(nextAccs);
           set({
@@ -894,50 +907,6 @@ export const useStore = create<Store>((set, get) => {
       adapter.setSettings(acc.integration);
       get().log('account_switched', `Переключение на аккаунт «${acc.name}»`);
       get().setAnalyticsPeriod(get().analyticsPeriod);
-      // Фоново освежаем runtime-данные, но старый кеш аккаунта остаётся на экране.
-      void (async () => {
-        const scopedAdapter = new AvitoAdapter(acc.integration);
-        const patchRuntime = (patch: Partial<AccountData>) => {
-          const currentAccs = get().accounts;
-          const target = currentAccs[id];
-          if (!target) return;
-          const nextAcc = { ...target, ...patch };
-          const nextAccs = { ...currentAccs, [id]: nextAcc };
-          saveAccounts(nextAccs);
-          set({
-            accounts: nextAccs,
-            ...(get().currentAccountId === id ? buildMirrorForPeriod(nextAcc, get().analyticsPeriod) : {}),
-          });
-          void repository.saveAccountCache(id, nextAcc).catch((e) =>
-            console.warn('[supabase] saveAccountCache on switch:', e)
-          );
-        };
-        try {
-          const balance = await scopedAdapter.fetchBalance();
-          if (balance) patchRuntime({ balance });
-        } catch (e) {
-          console.warn('[adapter] balance refresh on switch failed:', e);
-        }
-        try {
-          const charges = await scopedAdapter.fetchAccountCharges();
-          patchRuntime({ accountCharges: charges });
-        } catch (e) {
-          console.warn('[adapter] charges refresh on switch failed:', e);
-        }
-        try {
-          const today = new Date();
-          const past = new Date(today);
-          past.setDate(today.getDate() - 30);
-          const fmt = (d: Date) => d.toISOString().slice(0, 10);
-          const spendings = await scopedAdapter.fetchSpendings({
-            dateFrom: fmt(past),
-            dateTo: fmt(today),
-          });
-          if (spendings) patchRuntime({ spendings });
-        } catch (e) {
-          console.warn('[adapter] spendings refresh on switch failed:', e);
-        }
-      })();
     },
 
     syncAllApiAccounts: async () => {
@@ -1126,6 +1095,40 @@ export const useStore = create<Store>((set, get) => {
         `Массовая синхронизация API-аккаунтов: успешно ${ok}, ошибок ${bad}`
       );
       return results;
+    },
+
+    hydratePeriodCacheForAccounts: async (periodArg, accountIdsArg) => {
+      if (!SUPABASE_ENABLED) return;
+      const period = periodArg ?? get().analyticsPeriod;
+      const ids =
+        accountIdsArg ??
+        get().currentUser?.accountIds ??
+        Object.keys(get().accounts);
+      if (ids.length === 0) return;
+
+      const nextAccs = { ...get().accounts };
+      let changed = false;
+      for (const id of ids) {
+        const acc = nextAccs[id];
+        if (!acc) continue;
+        try {
+          const updated = await hydrateAccountPeriodFromDailyCache(acc, period);
+          if (!updated) continue;
+          nextAccs[id] = updated;
+          changed = true;
+        } catch (e) {
+          console.warn('[stats-cache] hydrate account period:', e);
+        }
+      }
+      if (!changed) return;
+
+      saveAccounts(nextAccs);
+      const activeId = get().currentAccountId;
+      const active = activeId ? nextAccs[activeId] : null;
+      set({
+        accounts: nextAccs,
+        ...(active ? buildMirrorForPeriod(active, get().analyticsPeriod) : {}),
+      });
     },
 
     init: async () => {
