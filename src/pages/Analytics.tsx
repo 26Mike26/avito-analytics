@@ -31,6 +31,7 @@ import {
   subcategoryName,
 } from '../lib/analytics';
 import { ProgressBar } from '../components/ProgressBar';
+import { repository } from '../services/Repository';
 
 function loadPreciseCityCache(key: string): Map<string, number> {
   try {
@@ -145,12 +146,88 @@ export default function Analytics() {
     [itemsForPeriod]
   );
 
-  const filteredItems = itemsForPeriod.filter((i) => {
-    if (category !== 'all' && subcategoryName(i.category) !== category) return false;
-    if (region !== 'all' && i.region !== region) return false;
-    if (status !== 'all' && i.status !== status) return false;
-    return true;
-  });
+  const filteredItems = useMemo(
+    () =>
+      itemsForPeriod.filter((i) => {
+        if (category !== 'all' && subcategoryName(i.category) !== category) return false;
+        if (region !== 'all' && i.region !== region) return false;
+        if (status !== 'all' && i.status !== status) return false;
+        return true;
+      }),
+    [itemsForPeriod, category, region, status]
+  );
+
+  useEffect(() => {
+    if (!currentAccountId || filteredItems.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const rows = await repository.loadItemDailyStats(
+          currentAccountId,
+          period.from,
+          period.to
+        );
+        if (cancelled) return;
+
+        const exactRows = rows.filter((row) => row.accuracy === 'exact');
+        if (exactRows.length === 0) return;
+
+        const exactSpendByItem = new Map<string, number>();
+        for (const row of exactRows) {
+          const key = String(row.itemId);
+          exactSpendByItem.set(
+            key,
+            (exactSpendByItem.get(key) ?? 0) + Number(row.spend ?? 0)
+          );
+        }
+
+        const idsByCity = new Map<string, string[]>();
+        for (const item of filteredItems) {
+          if (!itemHasPeriodData(item)) continue;
+          const key = String(item.id);
+          idsByCity.set(item.region, [...(idsByCity.get(item.region) ?? []), key]);
+        }
+
+        const exactCitySpend = new Map<string, number>();
+        for (const [city, ids] of idsByCity.entries()) {
+          if (ids.length === 0 || !ids.every((id) => exactSpendByItem.has(id))) continue;
+          exactCitySpend.set(
+            city,
+            ids.reduce((sum, id) => sum + (exactSpendByItem.get(id) ?? 0), 0)
+          );
+        }
+        if (exactCitySpend.size === 0) return;
+
+        setPreciseCity((prev) => {
+          const next = new Map(prev);
+          let changed = false;
+          for (const [city, spend] of exactCitySpend.entries()) {
+            const rounded = Math.round(spend);
+            if (next.get(city) !== rounded) {
+              next.set(city, rounded);
+              changed = true;
+            }
+          }
+          if (!changed) return prev;
+          savePreciseCityCache(preciseCityCacheKey, next);
+          return next;
+        });
+      } catch (e) {
+        console.warn('[stats-cache] restore analytics precise city spend:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentAccountId,
+    filteredItems,
+    period.from,
+    period.to,
+    preciseCityCacheKey,
+  ]);
 
   // Метрики за выбранный период по выбранным items.
   // Расход в metrics — только per-item VAS из operations (без распределённого CPx),
@@ -694,6 +771,22 @@ function CityRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function itemHasPeriodData(item: {
+  views?: number;
+  impressions?: number;
+  contacts?: number;
+  favorites?: number;
+  spend?: number;
+}) {
+  return (
+    Number(item.views ?? 0) > 0 ||
+    Number(item.impressions ?? 0) > 0 ||
+    Number(item.contacts ?? 0) > 0 ||
+    Number(item.favorites ?? 0) > 0 ||
+    Number(item.spend ?? 0) > 0
   );
 }
 
