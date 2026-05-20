@@ -60,6 +60,14 @@ export default function Settings() {
     try {
       const res = await new AvitoAdapter(next).testConnection();
       setCheck(res);
+    } catch (error) {
+      setCheck({
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось проверить подключение. Попробуйте ещё раз.',
+      });
     } finally {
       setBusy(false);
     }
