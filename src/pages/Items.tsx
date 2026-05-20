@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowDownRight,
   ArrowRight,
@@ -52,14 +52,20 @@ export default function Items() {
   const setItemBid = useStore((s) => s.setItemBid);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
+  const [searchParams] = useSearchParams();
+  const querySearch = searchParams.get('q') ?? '';
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(querySearch);
   const [category, setCategory] = useState('all');
   const [region, setRegion] = useState('all');
   const [status, setStatus] = useState<'all' | 'active' | 'paused' | 'archived'>('all');
   const [efficiency, setEfficiency] = useState<EfficiencyFilter>('all');
   const [sortBy, setSortBy] = useState<string>('spend');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  useEffect(() => {
+    setSearch(querySearch);
+  }, [querySearch]);
 
   // Расходы аккаунта за период — отделяем рассылки от CPA-пула
   const chargesInPeriod = useMemo(

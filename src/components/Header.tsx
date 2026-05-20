@@ -32,6 +32,7 @@ export function Header({
   );
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [headerSearch, setHeaderSearch] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,6 +50,13 @@ export function Header({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, []);
+
+  const submitSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = headerSearch.trim();
+    navigate(query ? `/items?q=${encodeURIComponent(query)}` : '/items');
+    setHeaderSearch('');
+  };
 
   return (
     <header className="h-16 bg-ink-900/80 backdrop-blur border-b border-ink-800 px-3 sm:px-4 md:px-6 flex items-center justify-between gap-2 sm:gap-3 relative z-10">
@@ -75,13 +83,19 @@ export function Header({
 
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {/* Поиск — только на больших экранах */}
-        <div className="hidden xl:flex items-center gap-2 bg-ink-850 border border-ink-700 rounded-full px-3 h-9 w-60">
+        <form
+          className="hidden xl:flex items-center gap-2 bg-ink-850 border border-ink-700 rounded-full px-3 h-9 w-60"
+          onSubmit={submitSearch}
+        >
           <Search className="w-4 h-4 text-ink-500" />
           <input
             placeholder="Поиск по объявлениям..."
+            value={headerSearch}
+            onChange={(event) => setHeaderSearch(event.target.value)}
             className="bg-transparent flex-1 text-sm outline-none placeholder:text-ink-500 text-ink-100"
+            aria-label="Поиск по объявлениям"
           />
-        </div>
+        </form>
 
         {/* Обновить — иконка на мобиле, с подписью на ≥md */}
         <button
