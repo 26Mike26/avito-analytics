@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileText, RefreshCw, Trash2 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
@@ -276,6 +276,22 @@ export default function ActionLog() {
   const [search, setSearch] = useState('');
   const [reportPeriod, setReportPeriod] = useState<PeriodValue>(() => lastNDaysRange(7));
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const lastCurrentId = useRef(currentId);
+
+  useEffect(() => {
+    const previousCurrentId = lastCurrentId.current;
+    if (accountFilter !== 'all' && !accounts[accountFilter]) {
+      setAccountFilter(currentId ?? 'all');
+    } else if (
+      accountFilter !== 'all' &&
+      accountFilter === previousCurrentId &&
+      currentId &&
+      currentId !== previousCurrentId
+    ) {
+      setAccountFilter(currentId);
+    }
+    lastCurrentId.current = currentId;
+  }, [accountFilter, accounts, currentId]);
 
   const avitoLog = useMemo(() => log.filter((entry) => entry.source === 'avito'), [log]);
   const types = useMemo(() => Array.from(new Set(avitoLog.map((l) => l.type))), [avitoLog]);
