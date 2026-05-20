@@ -18,6 +18,15 @@ export function Layout({ children, title, subtitle }: Props) {
     if (!initialized) init();
   }, [init, initialized]);
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [sidebarOpen]);
+
   return (
     <div className="min-h-screen flex bg-ink-900 text-ink-100 silk-bg">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
@@ -25,6 +34,7 @@ export function Layout({ children, title, subtitle }: Props) {
         <Header
           title={title}
           subtitle={subtitle}
+          sidebarOpen={sidebarOpen}
           onMenuClick={() => setSidebarOpen(true)}
         />
         <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">

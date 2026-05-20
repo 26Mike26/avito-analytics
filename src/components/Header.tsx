@@ -16,10 +16,12 @@ import { ThemeToggle } from './ThemeToggle';
 export function Header({
   title,
   subtitle,
+  sidebarOpen,
   onMenuClick,
 }: {
   title: string;
   subtitle?: string;
+  sidebarOpen?: boolean;
   onMenuClick?: () => void;
 }) {
   const navigate = useNavigate();
@@ -66,6 +68,8 @@ export function Header({
           onClick={onMenuClick}
           className="md:hidden w-10 h-10 rounded-lg border border-ink-700 bg-ink-850 hover:bg-ink-800 flex items-center justify-center text-ink-200 shrink-0"
           aria-label="Открыть меню"
+          aria-controls="app-sidebar"
+          aria-expanded={Boolean(sidebarOpen)}
         >
           <Menu className="w-5 h-5" />
         </button>

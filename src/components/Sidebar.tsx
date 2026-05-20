@@ -44,11 +44,14 @@ export function Sidebar({
       {open && (
         <div
           onClick={onClose}
+          aria-hidden="true"
           className="fixed inset-0 bg-black/60 z-30 md:hidden"
         />
       )}
 
       <aside
+        id="app-sidebar"
+        aria-label="Основная навигация"
         className={[
           // мобильная: фиксированный drawer слева, скрывается за экран
           'fixed inset-y-0 left-0 z-40 w-[260px] bg-ink-950/95 border-r border-ink-800 flex flex-col',
