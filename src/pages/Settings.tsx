@@ -33,6 +33,7 @@ const TEMPLATE_METRICS = `item_id,date,views,contacts,favorites,spend,bid
 export default function Settings() {
   const currentAccountId = useStore((s) => s.currentAccountId);
   const integration = useStore((s) => s.integration);
+  const loading = useStore((s) => s.loading);
   const update = useStore((s) => s.updateIntegration);
   const reload = useStore((s) => s.reloadFromAdapter);
   const applyImported = useStore((s) => s.applyImportedData);
@@ -317,8 +318,9 @@ export default function Settings() {
               ? new Date(integration.lastSyncAt).toLocaleString('ru-RU')
               : 'Никогда'}
           </div>
-          <button className="btn-secondary w-full mt-2" onClick={() => reload()}>
-            <RefreshCw className="w-4 h-4" /> Синхронизировать сейчас
+          <button className="btn-secondary w-full mt-2" onClick={() => reload()} disabled={loading}>
+            <RefreshCw className={['w-4 h-4', loading ? 'animate-spin' : ''].join(' ')} />
+            {loading ? 'Синхронизируем…' : 'Синхронизировать сейчас'}
           </button>
           <button
             className="btn-ghost w-full"
