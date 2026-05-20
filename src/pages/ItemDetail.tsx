@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -63,6 +63,11 @@ export default function ItemDetail() {
   const [bidDraft, setBidDraft] = useState<string>('');
   const itemNote = notes[String(id ?? '')] ?? '';
   const [noteDraft, setNoteDraft] = useState(itemNote);
+
+  useEffect(() => {
+    setBidDraft('');
+    setNoteDraft(itemNote);
+  }, [id, itemNote]);
 
   // Состояние загрузки: store ещё не подтянул данные → показываем спиннер,
   // а не «не найдено». Это убирает мерцание «отключено», когда на самом деле
