@@ -38,7 +38,7 @@ export default function Signup() {
       if (/confirmation/i.test(raw) || /подтверждение/i.test(raw))
         pretty = raw; // оставляем как есть — это уже наше сообщение
       setError(pretty || 'Ошибка регистрации');
-      console.error('[signup]', err);
+      console.warn('[signup]', err);
     } finally {
       setBusy(false);
     }

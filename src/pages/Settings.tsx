@@ -15,6 +15,7 @@ import { Badge } from '../components/Badge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { IntegrationMode } from '../types';
 import { AvitoAdapter } from '../services/AvitoAdapter';
+import { downloadTextFile } from '../lib/download';
 
 const TEMPLATE_ITEMS = `item_id,title,status,category,region,price,current_bid,views,contacts,favorites,spend,revenue,created_at
 1001,2-к квартира 54 м²,active,Недвижимость,Москва,11500000,75,1842,28,86,8400,,2026-04-01
@@ -113,13 +114,11 @@ export default function Settings() {
 
   const downloadTemplate = (kind: 'items' | 'metrics') => {
     const text = kind === 'items' ? TEMPLATE_ITEMS : TEMPLATE_METRICS;
-    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = kind === 'items' ? 'avito-items-template.csv' : 'avito-metrics-template.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(
+      text,
+      kind === 'items' ? 'avito-items-template.csv' : 'avito-metrics-template.csv',
+      'text/csv;charset=utf-8'
+    );
   };
 
   return (
@@ -219,17 +218,17 @@ export default function Settings() {
               сохраняются только в localStorage с пометкой «демо». Для боевого подключения
               используйте серверный прокси.
             </div>
-            <div className="flex flex-wrap items-center gap-2 mt-4">
-              <button className="btn-primary" onClick={onSave}>
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 mt-4">
+              <button className="btn-primary w-full sm:w-auto" onClick={onSave}>
                 Сохранить
               </button>
-              <button className="btn-secondary" onClick={onTest} disabled={busy}>
+              <button className="btn-secondary w-full sm:w-auto" onClick={onTest} disabled={busy}>
                 <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
                 Проверить подключение
               </button>
               {check && (
                 <span
-                  className={`inline-flex items-center gap-1 text-sm ${
+                  className={`inline-flex w-full sm:w-auto items-center gap-1 text-sm ${
                     check.ok ? 'text-emerald-300' : 'text-rose-300'
                   }`}
                 >
@@ -268,15 +267,15 @@ export default function Settings() {
               Также распознаётся ручная выгрузка по объявлениям и шаблон «по дням»
               (если есть колонка <code>date</code>).
             </p>
-            <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 mb-4">
               <button
-                className="btn-secondary"
+                className="btn-secondary w-full sm:w-auto"
                 onClick={() => downloadTemplate('items')}
               >
                 <Download className="w-4 h-4" /> Шаблон: сводный отчёт
               </button>
               <button
-                className="btn-secondary"
+                className="btn-secondary w-full sm:w-auto"
                 onClick={() => downloadTemplate('metrics')}
               >
                 <Download className="w-4 h-4" /> Шаблон: отчёт по дням

@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Empty } from '../components/Empty';
 import { PeriodPicker, type PeriodValue } from '../components/PeriodPicker';
 import { lastNDaysRange } from '../lib/analytics';
+import { downloadTextFile } from '../lib/download';
 import { useStore } from '../store/useStore';
 import type { ActionLogEntry, ActionSource, ActionType } from '../types';
 
@@ -334,23 +335,15 @@ export default function ActionLog() {
       (l.details ?? '').replace(/"/g, '""'),
     ]);
     const csv = [headers.join(','), ...rows.map((r) => r.map((v) => '"' + v + '"').join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'action-log-' + new Date().toISOString().slice(0, 10) + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(csv, 'action-log-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv;charset=utf-8');
   };
 
   const exportReport = () => {
-    const blob = new Blob([report.text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'account-work-report-' + report.period.from + '-' + report.period.to + '.txt';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(
+      report.text,
+      'account-work-report-' + report.period.from + '-' + report.period.to + '.txt',
+      'text/plain;charset=utf-8'
+    );
   };
 
   return (

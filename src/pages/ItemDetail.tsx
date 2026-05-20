@@ -232,7 +232,7 @@ export default function ItemDetail() {
             tone={bidRec.diffPercent > 0 ? 'green' : bidRec.diffPercent < 0 ? 'red' : 'gray'}
             description={bidRec.reason}
             extra={
-              <div className="flex items-center gap-3 mt-2 text-xs text-ink-400">
+              <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-ink-400">
                 <span>Текущая: {item.currentBid} ₽</span>
                 <span>Рекомендуем: {item.recommendedBid} ₽</span>
                 <span>
@@ -243,7 +243,7 @@ export default function ItemDetail() {
             }
             action={
               <button
-                className="btn-primary"
+                className="btn-primary w-full sm:w-auto"
                 disabled={bidRec.diffPercent === 0}
                 onClick={() =>
                   setItemBid(item.id, item.recommendedBid, `Применена рекомендация по ставке`)
@@ -301,7 +301,7 @@ export default function ItemDetail() {
           )}
           <div className="mt-4">
             <span className="label">Изменить ставку вручную</span>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="number"
                 className="input"
@@ -310,7 +310,7 @@ export default function ItemDetail() {
                 onChange={(e) => setBidDraft(e.target.value)}
               />
               <button
-                className="btn-primary"
+                className="btn-primary w-full sm:w-auto"
                 onClick={() => {
                   const v = Math.max(1, Math.round(Number(bidDraft)));
                   if (!isNaN(v) && v > 0) {
@@ -379,7 +379,7 @@ export default function ItemDetail() {
             value={noteDraft}
             onChange={(e) => setNoteDraft(e.target.value)}
           />
-          <button className="btn-secondary mt-2" onClick={() => setNote(item.id, noteDraft)}>
+          <button className="btn-secondary mt-2 w-full sm:w-auto" onClick={() => setNote(item.id, noteDraft)}>
             Сохранить заметку
           </button>
           {itemNote && noteDraft === itemNote && (

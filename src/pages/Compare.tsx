@@ -530,7 +530,7 @@ function CsvSlot({
           <div className="text-xs text-ink-400">
             Объявлений: {data.items.length} · Дневных метрик: {data.metrics.length}
           </div>
-          <button className="btn-secondary" onClick={onClear}>
+          <button className="btn-secondary w-full sm:w-auto" onClick={onClear}>
             Заменить файл
           </button>
         </div>

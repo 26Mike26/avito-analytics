@@ -34,7 +34,7 @@ export default function Login() {
       if (/network/i.test(raw))
         pretty = 'Не удалось связаться с сервером. Проверьте интернет и значение VITE_SUPABASE_URL в .env.';
       setError(pretty || 'Ошибка входа');
-      console.error('[login]', err);
+      console.warn('[login]', err);
     } finally {
       setBusy(false);
     }
