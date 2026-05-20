@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Check, ShieldCheck, Wand2 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge, PriorityBadge } from '../components/Badge';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useStore } from '../store/useStore';
 import { calculateBidRecommendation } from '../lib/recommendations';
 import { formatNumber, formatRub } from '../lib/analytics';
@@ -243,34 +244,19 @@ export default function Bids() {
         </div>
       </div>
 
-      {confirmOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-30 p-4">
-          <div className="card p-5 sm:p-6 max-w-md w-full">
-            <h2 className="font-semibold text-white text-lg">
-              Применить все рекомендации?
-            </h2>
-            <p className="text-sm text-ink-300 mt-2">
-              Будут применены безопасные изменения ставок: повышения не более чем на {limit}%, и
-              без увеличения ставок для объявлений без лидов. Все изменения попадут в историю.
-            </p>
-            <div className="flex justify-end gap-2 mt-5">
-              <button className="btn-secondary" onClick={() => setConfirmOpen(false)}>
-                Отмена
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  const n = applyAll(limit);
-                  showAppliedCount(n);
-                  setConfirmOpen(false);
-                }}
-              >
-                Применить
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Применить все рекомендации?"
+        description={`Будут применены безопасные изменения ставок: повышения не более чем на ${limit}%, и без увеличения ставок для объявлений без лидов. Все изменения попадут в историю.`}
+        confirmText="Применить"
+        tone="primary"
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          const n = applyAll(limit);
+          showAppliedCount(n);
+          setConfirmOpen(false);
+        }}
+      />
 
       {appliedCount !== null && (
         <div className="fixed bottom-6 right-6 bg-emerald-500 text-white px-4 py-3 rounded-lg shadow-lg text-sm">

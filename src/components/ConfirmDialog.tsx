@@ -22,6 +22,11 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const iconClass =
+    tone === 'danger'
+      ? 'bg-rose-500/10 text-rose-300'
+      : 'bg-accent/10 text-accent';
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -47,7 +52,11 @@ export function ConfirmDialog({
         aria-labelledby="confirm-dialog-title"
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-300">
+          <div
+            className={['mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', iconClass].join(
+              ' '
+            )}
+          >
             <AlertTriangle className="h-5 w-5" />
           </div>
           <div className="min-w-0">
