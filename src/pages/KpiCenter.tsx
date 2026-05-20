@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Save, Target } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { useStore } from '../store/useStore';
@@ -23,11 +23,26 @@ export default function KpiCenter() {
   const setKpi = useStore((s) => s.setKpi);
   const [draft, setDraft] = useState<AccountKpi>(kpi);
   const [saved, setSaved] = useState(false);
+  const savedResetTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (savedResetTimer.current != null) {
+        window.clearTimeout(savedResetTimer.current);
+      }
+    };
+  }, []);
 
   const onSave = () => {
     setKpi(draft);
+    if (savedResetTimer.current != null) {
+      window.clearTimeout(savedResetTimer.current);
+    }
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    savedResetTimer.current = window.setTimeout(() => {
+      setSaved(false);
+      savedResetTimer.current = null;
+    }, 2000);
   };
 
   return (

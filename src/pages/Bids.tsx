@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Check, ShieldCheck, Wand2 } from 'lucide-react';
 import { Layout } from '../components/Layout';
@@ -18,6 +18,26 @@ export default function Bids() {
   const [filter, setFilter] = useState<'all' | 'increase' | 'decrease' | 'thin'>('all');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [appliedCount, setAppliedCount] = useState<number | null>(null);
+  const appliedResetTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (appliedResetTimer.current != null) {
+        window.clearTimeout(appliedResetTimer.current);
+      }
+    };
+  }, []);
+
+  const showAppliedCount = (count: number) => {
+    if (appliedResetTimer.current != null) {
+      window.clearTimeout(appliedResetTimer.current);
+    }
+    setAppliedCount(count);
+    appliedResetTimer.current = window.setTimeout(() => {
+      setAppliedCount(null);
+      appliedResetTimer.current = null;
+    }, 3000);
+  };
 
   const rows = useMemo(() => {
     return items
@@ -241,9 +261,8 @@ export default function Bids() {
                 className="btn-primary"
                 onClick={() => {
                   const n = applyAll(limit);
-                  setAppliedCount(n);
+                  showAppliedCount(n);
                   setConfirmOpen(false);
-                  setTimeout(() => setAppliedCount(null), 3000);
                 }}
               >
                 Применить
