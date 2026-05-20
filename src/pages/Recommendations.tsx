@@ -16,21 +16,22 @@ const typeLabel: Record<string, string> = {
   account: 'Аккаунт',
 };
 
+type StatusFilter = 'new' | 'accepted' | 'postponed' | 'declined' | 'all';
+
 export default function Recommendations() {
   const recommendations = useStore((s) => s.recommendations);
   const acceptRec = useStore((s) => s.applyRecommendation);
   const declineRec = useStore((s) => s.declineRecommendation);
   const postponeRec = useStore((s) => s.postponeRecommendation);
 
-  const [statusFilter, setStatusFilter] = useState<'new' | 'all' | 'archive'>('new');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('new');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'high' | 'medium' | 'low'>(
     'all'
   );
   const [typeFilter, setTypeFilter] = useState<'all' | string>('all');
 
   const filtered = recommendations.filter((r) => {
-    if (statusFilter === 'new' && r.status !== 'new') return false;
-    if (statusFilter === 'archive' && r.status === 'new') return false;
+    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (priorityFilter !== 'all' && r.priority !== priorityFilter) return false;
     if (typeFilter !== 'all' && r.type !== typeFilter) return false;
     return true;
@@ -57,9 +58,11 @@ export default function Recommendations() {
           {(
             [
               ['new', 'Новые'],
+              ['accepted', 'Принятые'],
+              ['postponed', 'Отложенные'],
+              ['declined', 'Отклонённые'],
               ['all', 'Все'],
-              ['archive', 'Архив'],
-            ] as const
+            ] satisfies Array<[StatusFilter, string]>
           ).map(([k, l]) => (
             <button
               key={k}
