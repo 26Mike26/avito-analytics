@@ -65,7 +65,7 @@ export function PeriodPicker({
             key={p.label}
             onClick={() => onChange(p.range())}
             className={[
-              'chip transition',
+              'chip min-h-[32px] px-3 py-1 transition',
               isActive(p.range)
                 ? 'bg-accent/15 text-accent border border-accent/30'
                 : 'bg-ink-800 text-ink-300 border border-ink-700 hover:text-white',

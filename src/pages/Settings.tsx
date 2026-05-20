@@ -282,16 +282,18 @@ export default function Settings() {
                 <Download className="w-4 h-4" /> Шаблон: отчёт по дням
               </button>
             </div>
-            <input
-              type="file"
-              accept=".csv,.tsv,.xlsx"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onImport(f);
-                e.target.value = '';
-              }}
-              className="text-sm"
-            />
+            <div className="max-w-full overflow-hidden">
+              <input
+                type="file"
+                accept=".csv,.tsv,.xlsx"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onImport(f);
+                  e.target.value = '';
+                }}
+                className="block w-full max-w-full text-sm text-ink-300 file:mr-3 file:rounded-full file:border-0 file:bg-ink-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-ink-100 hover:file:bg-ink-700"
+              />
+            </div>
             {importInfo && (
               <div
                 className={[

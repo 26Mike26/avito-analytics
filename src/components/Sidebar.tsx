@@ -45,7 +45,7 @@ export function Sidebar({
         <div
           onClick={onClose}
           aria-hidden="true"
-          className="fixed inset-0 bg-black/60 z-30 md:hidden"
+          className="fixed inset-0 bg-black/60 z-30 lg:hidden"
         />
       )}
 
@@ -58,7 +58,7 @@ export function Sidebar({
           'transform transition-transform duration-200 ease-out',
           open ? 'translate-x-0' : '-translate-x-full',
           // десктоп: всегда виден, статичная позиция
-          'md:static md:translate-x-0 md:w-64 md:shrink-0',
+          'lg:static lg:translate-x-0 lg:w-64 lg:shrink-0',
         ].join(' ')}
       >
         <div className="px-4 h-16 flex items-center gap-3 border-b border-ink-800">
@@ -76,7 +76,7 @@ export function Sidebar({
           {/* Кнопка закрытия только на мобильной */}
           <button
             onClick={onClose}
-            className="md:hidden w-9 h-9 rounded-lg hover:bg-ink-800 flex items-center justify-center text-ink-300"
+            className="lg:hidden w-9 h-9 rounded-lg hover:bg-ink-800 flex items-center justify-center text-ink-300"
             aria-label="Закрыть меню"
           >
             <X className="w-4 h-4" />

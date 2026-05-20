@@ -655,7 +655,7 @@ export default function Analytics() {
           </ResponsiveContainer>
         </Card>
         <Card title="Лидеры и аутсайдеры">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <div className="text-xs uppercase tracking-wide text-emerald-300 font-semibold mb-2">
                 Лидеры
@@ -665,9 +665,9 @@ export default function Analytics() {
                   const cpl = calcCpl(it.spend, it.contacts);
                   const ctr = calcCtr(it.views, it.impressions);
                   return (
-                    <li key={it.id} className="text-sm flex items-center justify-between gap-3">
+                    <li key={it.id} className="text-sm flex items-start justify-between gap-3">
                       <span className="truncate">{it.title}</span>
-                      <span className="text-xs text-emerald-300 shrink-0 text-right">
+                      <span className="text-xs text-emerald-300 shrink-0 text-right leading-5">
                         {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'CPL —'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
                       </span>
                     </li>
@@ -684,9 +684,9 @@ export default function Analytics() {
                   const cpl = calcCpl(it.spend, it.contacts);
                   const ctr = calcCtr(it.views, it.impressions);
                   return (
-                    <li key={it.id} className="text-sm flex items-center justify-between gap-3">
+                    <li key={it.id} className="text-sm flex items-start justify-between gap-3">
                       <span className="truncate">{it.title}</span>
-                      <span className="text-xs text-rose-300 shrink-0 text-right">
+                      <span className="text-xs text-rose-300 shrink-0 text-right leading-5">
                         {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'нет лидов'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
                       </span>
                     </li>

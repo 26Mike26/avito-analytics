@@ -66,7 +66,7 @@ export function Header({
         {/* Burger — только на мобиле */}
         <button
           onClick={onMenuClick}
-          className="md:hidden w-10 h-10 rounded-lg border border-ink-700 bg-ink-850 hover:bg-ink-800 flex items-center justify-center text-ink-200 shrink-0"
+          className="lg:hidden w-10 h-10 rounded-lg border border-ink-700 bg-ink-850 hover:bg-ink-800 flex items-center justify-center text-ink-200 shrink-0"
           aria-label="Открыть меню"
           aria-controls="app-sidebar"
           aria-expanded={Boolean(sidebarOpen)}
