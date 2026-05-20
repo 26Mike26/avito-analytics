@@ -13,6 +13,7 @@ import { Layout } from '../components/Layout';
 import { useStore } from '../store/useStore';
 import { Badge } from '../components/Badge';
 import type { IntegrationMode } from '../types';
+import { AvitoAdapter } from '../services/AvitoAdapter';
 
 const TEMPLATE_ITEMS = `item_id,title,status,category,region,price,current_bid,views,contacts,favorites,spend,revenue,created_at
 1001,2-к квартира 54 м²,active,Недвижимость,Москва,11500000,75,1842,28,86,8400,,2026-04-01
@@ -32,7 +33,6 @@ export default function Settings() {
   const currentAccountId = useStore((s) => s.currentAccountId);
   const integration = useStore((s) => s.integration);
   const update = useStore((s) => s.updateIntegration);
-  const adapter = useStore((s) => s.adapter);
   const reload = useStore((s) => s.reloadFromAdapter);
   const applyImported = useStore((s) => s.applyImportedData);
   const resetToDemo = useStore((s) => s.resetToDemo);
@@ -51,11 +51,15 @@ export default function Settings() {
   }, [currentAccountId, integration]);
 
   const onTest = async () => {
-    update({ ...draft });
+    const next = { ...draft };
+    update(next);
     setBusy(true);
-    const res = await adapter.testConnection();
-    setBusy(false);
-    setCheck(res);
+    try {
+      const res = await new AvitoAdapter(next).testConnection();
+      setCheck(res);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const onSave = () => {
@@ -72,7 +76,7 @@ export default function Settings() {
       return;
     }
     const text = await file.text();
-    const res = await adapter.importCsv(text);
+    const res = await new AvitoAdapter(draft).importCsv(text);
     if (res.items.length === 0 && res.metrics.length === 0) {
       setImportTone('err');
       setImportInfo(
