@@ -93,7 +93,6 @@ type WorkReport = {
   text: string;
 };
 
-const BID_TYPES: ActionType[] = ['item_bid_changed'];
 const BULK_BID_TYPES: ActionType[] = ['item_bid_bulk_applied'];
 const TOPUP_TYPES: ActionType[] = ['avito_balance_topup'];
 const PUBLISH_TYPES: ActionType[] = ['avito_item_published'];
