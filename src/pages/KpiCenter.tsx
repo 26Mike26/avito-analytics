@@ -19,11 +19,13 @@ const strategyHint: Record<AccountKpi['strategy'], string> = {
 };
 
 export default function KpiCenter() {
+  const currentAccountId = useStore((s) => s.currentAccountId);
   const kpi = useStore((s) => s.kpi);
   const setKpi = useStore((s) => s.setKpi);
   const [draft, setDraft] = useState<AccountKpi>(kpi);
   const [saved, setSaved] = useState(false);
   const savedResetTimer = useRef<number | null>(null);
+  const lastAccountId = useRef(currentAccountId);
 
   useEffect(() => {
     return () => {
@@ -32,6 +34,18 @@ export default function KpiCenter() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    setDraft(kpi);
+    if (lastAccountId.current !== currentAccountId) {
+      if (savedResetTimer.current != null) {
+        window.clearTimeout(savedResetTimer.current);
+        savedResetTimer.current = null;
+      }
+      setSaved(false);
+      lastAccountId.current = currentAccountId;
+    }
+  }, [currentAccountId, kpi]);
 
   const onSave = () => {
     setKpi(draft);

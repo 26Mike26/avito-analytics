@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CheckCircle2,
   Download,
@@ -29,6 +29,7 @@ const TEMPLATE_METRICS = `item_id,date,views,contacts,favorites,spend,bid
 `;
 
 export default function Settings() {
+  const currentAccountId = useStore((s) => s.currentAccountId);
   const integration = useStore((s) => s.integration);
   const update = useStore((s) => s.updateIntegration);
   const adapter = useStore((s) => s.adapter);
@@ -41,6 +42,13 @@ export default function Settings() {
   const [importInfo, setImportInfo] = useState<string | null>(null);
   const [importTone, setImportTone] = useState<'ok' | 'warn' | 'err'>('ok');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(integration);
+    setCheck(null);
+    setImportInfo(null);
+    setImportTone('ok');
+  }, [currentAccountId, integration]);
 
   const onTest = async () => {
     update({ ...draft });
