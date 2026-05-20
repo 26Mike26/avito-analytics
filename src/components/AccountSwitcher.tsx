@@ -7,7 +7,6 @@ export function AccountSwitcher() {
   const accounts = useStore((s) => s.accounts);
   const currentId = useStore((s) => s.currentAccountId);
   const switchAccount = useStore((s) => s.switchAccount);
-  const createAccount = useStore((s) => s.createAccount);
   const user = useStore((s) => s.currentUser);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -74,19 +73,13 @@ export function AccountSwitcher() {
             ))}
           </ul>
           <div className="border-t border-ink-800 mt-2 pt-2 flex gap-1">
-            <button
-              onClick={() => {
-                const name = prompt('Название нового аккаунта');
-                if (name) {
-                  const id = createAccount(name);
-                  switchAccount(id);
-                }
-                setOpen(false);
-              }}
+            <Link
+              to="/accounts"
+              onClick={() => setOpen(false)}
               className="btn-ghost flex-1 justify-start"
             >
               <Plus className="w-4 h-4" /> Добавить аккаунт
-            </button>
+            </Link>
             <Link
               to="/accounts"
               onClick={() => setOpen(false)}
