@@ -39,8 +39,15 @@ export function Header({
       if (menuRef.current && !menuRef.current.contains(e.target as Node))
         setMenuOpen(false);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   return (
@@ -115,11 +122,13 @@ export function Header({
             className="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-ink-850 border border-ink-700 hover:border-accent/60 hover:bg-ink-800 flex items-center justify-center transition"
             title={user?.name ?? 'Профиль'}
             aria-label="Профиль"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
           >
             <UserIcon className="w-4 h-4 text-ink-200" />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 mt-2 w-60 card p-2 z-30">
+            <div className="absolute right-0 mt-2 w-60 card p-2 z-30" role="menu">
               <div className="px-3 py-2">
                 <div className="text-sm font-semibold text-white truncate">
                   {user?.name}

@@ -15,8 +15,15 @@ export function AccountSwitcher() {
     const onClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   if (!user) return null;
@@ -30,6 +37,8 @@ export function AccountSwitcher() {
       <button
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-1.5 sm:gap-2 bg-ink-850 hover:bg-ink-800 border border-ink-700 hover:border-accent/40 rounded-full px-2 sm:px-3 h-10 sm:h-9 text-sm transition"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <span className="w-1.5 h-1.5 rounded-full bg-accent shadow-glow" />
         <div className="hidden md:block text-ink-400 text-[11px] uppercase tracking-wider">
@@ -42,7 +51,7 @@ export function AccountSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-72 card p-2 z-30">
+        <div className="absolute right-0 mt-2 w-72 card p-2 z-30" role="menu">
           <div className="text-[10px] uppercase tracking-wider text-ink-500 px-3 py-2">
             Ваши аккаунты ({userAccounts.length})
           </div>
