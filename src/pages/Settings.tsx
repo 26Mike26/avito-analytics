@@ -75,22 +75,29 @@ export default function Settings() {
       );
       return;
     }
-    const text = await file.text();
-    const res = await new AvitoAdapter(draft).importCsv(text);
-    if (res.items.length === 0 && res.metrics.length === 0) {
+    try {
+      const text = await file.text();
+      const res = await new AvitoAdapter(draft).importCsv(text);
+      if (res.items.length === 0 && res.metrics.length === 0) {
+        setImportTone('err');
+        setImportInfo(
+          `Импорт не выполнен. ${res.warnings.join(' ') || 'Проверьте формат файла.'}`
+        );
+        return;
+      }
+      applyImported(res.items, res.metrics);
+      setImportTone(res.warnings.length > 0 ? 'warn' : 'ok');
+      setImportInfo(
+        `Готово. Формат: ${res.detectedFormat === 'metrics' ? 'отчёт по дням' : 'сводный отчёт'}. ` +
+          `Объявлений: ${res.items.length}. Записей метрик: ${res.metrics.length}. ` +
+          (res.warnings.length > 0 ? 'Замечания: ' + res.warnings.join(' ') : 'Замечаний нет.')
+      );
+    } catch (error) {
       setImportTone('err');
       setImportInfo(
-        `Импорт не выполнен. ${res.warnings.join(' ') || 'Проверьте формат файла.'}`
+        'Импорт не выполнен. ' + (error instanceof Error ? error.message : 'Проверьте файл и попробуйте ещё раз.')
       );
-      return;
     }
-    applyImported(res.items, res.metrics);
-    setImportTone(res.warnings.length > 0 ? 'warn' : 'ok');
-    setImportInfo(
-      `Готово. Формат: ${res.detectedFormat === 'metrics' ? 'отчёт по дням' : 'сводный отчёт'}. ` +
-        `Объявлений: ${res.items.length}. Записей метрик: ${res.metrics.length}. ` +
-        (res.warnings.length > 0 ? 'Замечания: ' + res.warnings.join(' ') : 'Замечаний нет.')
-    );
   };
 
   const downloadTemplate = (kind: 'items' | 'metrics') => {
