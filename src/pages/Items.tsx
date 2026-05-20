@@ -52,7 +52,7 @@ export default function Items() {
   const setItemBid = useStore((s) => s.setItemBid);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const querySearch = searchParams.get('q') ?? '';
 
   const [search, setSearch] = useState(querySearch);
@@ -229,7 +229,11 @@ export default function Items() {
             placeholder="Поиск по названию"
             className="input"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSearch(next);
+              setSearchParams(next.trim() ? { q: next } : {}, { replace: true });
+            }}
           />
           <select
             className="input"
