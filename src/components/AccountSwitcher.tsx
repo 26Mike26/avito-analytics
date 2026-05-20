@@ -37,6 +37,7 @@ export function AccountSwitcher() {
       <button
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-1.5 sm:gap-2 bg-ink-850 hover:bg-ink-800 border border-ink-700 hover:border-accent/40 rounded-full px-2 sm:px-3 h-10 sm:h-9 text-sm transition"
+        aria-label="Переключить аккаунт"
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -51,7 +52,10 @@ export function AccountSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-72 card p-2 z-30" role="menu">
+        <div
+          className="fixed left-3 right-3 top-16 w-auto card p-2 z-30 sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-72"
+          role="menu"
+        >
           <div className="text-[10px] uppercase tracking-wider text-ink-500 px-3 py-2">
             Ваши аккаунты ({userAccounts.length})
           </div>
@@ -63,6 +67,7 @@ export function AccountSwitcher() {
                     switchAccount(a.id);
                     setOpen(false);
                   }}
+                  role="menuitem"
                   className={[
                     'w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition',
                     a.id === currentId
@@ -86,6 +91,7 @@ export function AccountSwitcher() {
               to="/accounts"
               onClick={() => setOpen(false)}
               className="btn-ghost flex-1 justify-start"
+              role="menuitem"
             >
               <Plus className="w-4 h-4" /> Добавить аккаунт
             </Link>
@@ -94,6 +100,8 @@ export function AccountSwitcher() {
               onClick={() => setOpen(false)}
               className="btn-ghost"
               title="Управление аккаунтами"
+              aria-label="Управление аккаунтами"
+              role="menuitem"
             >
               <SettingsIcon className="w-4 h-4" />
             </Link>
