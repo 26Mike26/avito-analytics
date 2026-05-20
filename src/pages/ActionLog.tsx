@@ -371,9 +371,9 @@ export default function ActionLog() {
         </div>
       </div>
 
-      <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
+      <div className="card p-4 mb-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
         <select
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={accountFilter}
           onChange={(e) => setAccountFilter(e.target.value)}
         >
@@ -385,7 +385,7 @@ export default function ActionLog() {
           ))}
         </select>
         <select
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
         >
@@ -397,14 +397,14 @@ export default function ActionLog() {
           ))}
         </select>
         <input
-          className="input w-64"
+          className="input w-full sm:w-64"
           placeholder="Поиск по описанию"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <div className="ml-auto flex items-center gap-2 flex-wrap">
+        <div className="w-full xl:w-auto xl:ml-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:flex-wrap">
           <button
-            className="btn-secondary"
+            className="btn-secondary w-full sm:w-auto"
             onClick={() => reloadFromAdapter()}
             disabled={loading}
             title="Подтянуть события из Авито (история операций, чаты, звонки)"
@@ -412,11 +412,11 @@ export default function ActionLog() {
             <RefreshCw className={['w-4 h-4', loading ? 'animate-spin' : ''].join(' ')} />
             Подтянуть из Авито
           </button>
-          <button className="btn-secondary" onClick={exportCsv}>
+          <button className="btn-secondary w-full sm:w-auto" onClick={exportCsv}>
             <Download className="w-4 h-4" /> Экспорт CSV
           </button>
           <button
-            className="btn-danger"
+            className="btn-danger w-full sm:w-auto"
             onClick={() => setClearConfirmOpen(true)}
           >
             <Trash2 className="w-4 h-4" /> Очистить
@@ -442,7 +442,7 @@ export default function ActionLog() {
           </div>
           <div className="flex flex-col sm:items-end gap-3">
             <PeriodPicker value={reportPeriod} onChange={setReportPeriod} className="xl:justify-end" />
-            <button className="btn-secondary w-fit" onClick={exportReport}>
+            <button className="btn-secondary w-full sm:w-fit" onClick={exportReport}>
               <Download className="w-4 h-4" /> Экспорт отчета
             </button>
           </div>

@@ -126,12 +126,12 @@ export default function Bids() {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="w-full lg:w-auto lg:ml-auto flex flex-col sm:flex-row sm:items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-400" />
           <span className="text-xs text-ink-400">
             Защита: ставки выше {limit}% или для объявлений без лидов не применяются автоматически.
           </span>
-          <button className="btn-primary" onClick={() => setConfirmOpen(true)}>
+          <button className="btn-primary w-full sm:w-auto sm:shrink-0" onClick={() => setConfirmOpen(true)}>
             <Wand2 className="w-4 h-4" /> Применить все
           </button>
         </div>

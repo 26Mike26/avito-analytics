@@ -179,8 +179,8 @@ export default function KpiCenter() {
             </div>
           </Section>
 
-          <div className="flex items-center gap-3">
-            <button onClick={onSave} className="btn-primary">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <button onClick={onSave} className="btn-primary w-full sm:w-auto">
               <Save className="w-4 h-4" /> Сохранить и пересчитать
             </button>
             {saved && (

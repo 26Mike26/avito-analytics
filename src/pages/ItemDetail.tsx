@@ -146,7 +146,7 @@ export default function ItemDetail() {
           }
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-secondary ml-auto"
+          className="btn-secondary w-full sm:w-auto sm:ml-auto"
         >
           <ExternalLink className="w-4 h-4" /> Открыть на Авито
         </a>

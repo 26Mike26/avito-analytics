@@ -224,7 +224,7 @@ export default function Items() {
           <h2 className="font-semibold text-white text-sm">Период и фильтры</h2>
         </div>
         <PeriodPicker value={period} onChange={setPeriod} className="mb-3" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <input
             placeholder="Поиск по названию"
             className="input"

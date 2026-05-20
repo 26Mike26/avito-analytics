@@ -209,7 +209,7 @@ export default function Accounts() {
             </div>
           </div>
           <button
-            className="btn-primary lg:shrink-0"
+            className="btn-primary w-full lg:w-auto lg:shrink-0"
             onClick={runBulkSync}
             disabled={syncing || apiAccounts.length === 0}
             title={apiAccounts.length === 0 ? 'Нет аккаунтов в режиме API' : 'Проверить API и обновить данные во всех API-аккаунтах'}

@@ -53,8 +53,8 @@ export default function Recommendations() {
         </Link>
       </div>
 
-      <div className="card p-4 mb-4 flex flex-wrap items-center gap-3">
-        <div className="pill-nav">
+      <div className="card p-4 mb-4 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
+        <div className="pill-nav w-full sm:w-auto">
           {(
             [
               ['new', 'Новые'],
@@ -74,7 +74,7 @@ export default function Recommendations() {
           ))}
         </div>
         <select
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value as typeof priorityFilter)}
         >
@@ -84,7 +84,7 @@ export default function Recommendations() {
           <option value="low">Низкий</option>
         </select>
         <select
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
         >
@@ -95,7 +95,7 @@ export default function Recommendations() {
             </option>
           ))}
         </select>
-        <div className="ml-auto text-sm text-ink-400">
+        <div className="w-full sm:w-auto sm:ml-auto text-sm text-ink-400">
           Показано {filtered.length} рекомендаций
         </div>
       </div>
@@ -150,23 +150,23 @@ export default function Recommendations() {
                           Открыть объявление →
                         </Link>
                       )}
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="w-full flex flex-col sm:flex-row sm:items-center gap-2 sm:flex-wrap">
                         <button
-                          className="btn-secondary"
+                          className="btn-secondary w-full sm:w-auto"
                           disabled={r.status !== 'new'}
                           onClick={() => postponeRec(r.id)}
                         >
                           <Clock className="w-4 h-4" /> Позже
                         </button>
                         <button
-                          className="btn-danger"
+                          className="btn-danger w-full sm:w-auto"
                           disabled={r.status !== 'new'}
                           onClick={() => declineRec(r.id)}
                         >
                           <X className="w-4 h-4" /> Отклонить
                         </button>
                         <button
-                          className="btn-primary"
+                          className="btn-primary w-full sm:w-auto"
                           disabled={r.status !== 'new'}
                           onClick={() => acceptRec(r.id)}
                         >

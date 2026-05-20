@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -33,7 +33,6 @@ import {
   scaleKpiForPeriod,
 } from '../lib/analytics';
 import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
-import { repository } from '../services/Repository';
 import { MapPin } from 'lucide-react';
 
 type PreciseStats = {
@@ -46,6 +45,70 @@ type PreciseStats = {
 
 type PreciseCityStats = PreciseStats;
 type PreciseItemStats = PreciseStats;
+
+type PreciseDashboardCache = {
+  items: Map<string, PreciseItemStats>;
+  cities: Map<string, PreciseCityStats>;
+};
+
+function preciseDashboardCacheKey(
+  accountId: string | null | undefined,
+  from: string,
+  to: string
+): string {
+  return `avito-precise-dashboard-v1:${accountId ?? 'demo'}:${from}:${to}`;
+}
+
+function statsMapFromRaw<T extends PreciseStats>(raw: unknown): Map<string, T> {
+  if (!raw || typeof raw !== 'object') return new Map();
+  const entries = Object.entries(raw as Record<string, Partial<PreciseStats>>)
+    .filter(([, value]) => value && typeof value === 'object')
+    .map(([key, value]) => [
+      key,
+      {
+        spend: Number(value.spend ?? 0),
+        contacts: Number(value.contacts ?? 0),
+        views: Number(value.views ?? 0),
+        impressions: Number(value.impressions ?? 0),
+        favorites: Number(value.favorites ?? 0),
+      } as T,
+    ] as const)
+    .filter(([, value]) => Number.isFinite(value.spend));
+  return new Map(entries);
+}
+
+function loadPreciseDashboardCache(key: string): PreciseDashboardCache {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { items: new Map(), cities: new Map() };
+    const parsed = JSON.parse(raw) as { items?: unknown; cities?: unknown };
+    return {
+      items: statsMapFromRaw<PreciseItemStats>(parsed.items),
+      cities: statsMapFromRaw<PreciseCityStats>(parsed.cities),
+    };
+  } catch {
+    return { items: new Map(), cities: new Map() };
+  }
+}
+
+function savePreciseDashboardCache(
+  key: string,
+  items: Map<string, PreciseItemStats>,
+  cities: Map<string, PreciseCityStats>
+) {
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        items: Object.fromEntries(items),
+        cities: Object.fromEntries(cities),
+      })
+    );
+  } catch (error) {
+    console.warn('[storage] Не удалось сохранить метки уточнения дашборда:', error);
+  }
+}
 
 export default function Dashboard() {
   const allItems = useStore((s) => s.items);
@@ -81,9 +144,16 @@ export default function Dashboard() {
     nextEta: undefined as number | undefined,
     error: undefined as string | undefined,
   });
+  const preciseCacheKey = useMemo(
+    () => preciseDashboardCacheKey(currentAccountId, period.from, period.to),
+    [currentAccountId, period.from, period.to]
+  );
+  const preciseCacheKeyRef = useRef(preciseCacheKey);
 
   useEffect(() => {
-    setPreciseCityStats(new Map());
+    preciseCacheKeyRef.current = preciseCacheKey;
+    const cached = loadPreciseDashboardCache(preciseCacheKey);
+    setPreciseCityStats(cached.cities);
     setPreciseCitiesProgress({
       busy: false,
       done: 0,
@@ -91,7 +161,7 @@ export default function Dashboard() {
       nextEta: undefined,
       error: undefined,
     });
-    setPreciseItemStats(new Map());
+    setPreciseItemStats(cached.items);
     setPreciseItemsProgress({
       busy: false,
       done: 0,
@@ -99,7 +169,7 @@ export default function Dashboard() {
       nextEta: undefined,
       error: undefined,
     });
-  }, [currentAccountId, period.from, period.to]);
+  }, [preciseCacheKey]);
 
   // Разбиваем расходы из operations_history на 3 группы за выбранный период:
   //  - promotion_pool: пополнения CPA/CPx-аванса = расход на рекламу
@@ -197,84 +267,6 @@ export default function Dashboard() {
     [periodItems, preciseItemStats]
   );
 
-  useEffect(() => {
-    if (!currentAccountId || periodItems.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const rows = await repository.loadItemDailyStats(
-          currentAccountId,
-          period.from,
-          period.to
-        );
-        if (cancelled) return;
-
-        const exactRows = rows.filter((row) => row.accuracy === 'exact');
-        if (exactRows.length === 0) return;
-
-        const exactSpendByItem = new Map<string, number>();
-        for (const row of exactRows) {
-          const key = String(row.itemId);
-          exactSpendByItem.set(
-            key,
-            (exactSpendByItem.get(key) ?? 0) + Number(row.spend ?? 0)
-          );
-        }
-
-        const fallbackById = new Map(periodItems.map((item) => [String(item.id), item]));
-        const itemMap = new Map<string, PreciseItemStats>();
-        for (const [itemId, spend] of exactSpendByItem.entries()) {
-          const fallback = fallbackById.get(itemId);
-          if (!fallback) continue;
-          itemMap.set(itemId, {
-            views: Number(fallback.views ?? 0),
-            impressions: Number(fallback.impressions ?? 0),
-            contacts: Number(fallback.contacts ?? 0),
-            favorites: Number(fallback.favorites ?? 0),
-            spend: Math.round(spend),
-          });
-        }
-        if (itemMap.size === 0) return;
-
-        const cityIds = new Map<string, string[]>();
-        for (const item of periodItems) {
-          if (!itemHasPeriodData(item)) continue;
-          const key = String(item.id);
-          cityIds.set(item.region, [...(cityIds.get(item.region) ?? []), key]);
-        }
-        const cityMap = new Map<string, PreciseCityStats>();
-        for (const [region, ids] of cityIds.entries()) {
-          if (ids.length === 0 || !ids.every((id) => itemMap.has(id))) continue;
-          const stats = ids.reduce(
-            (acc, id) => {
-              const item = itemMap.get(id);
-              if (!item) return acc;
-              return {
-                views: acc.views + item.views,
-                impressions: acc.impressions + item.impressions,
-                contacts: acc.contacts + item.contacts,
-                favorites: acc.favorites + item.favorites,
-                spend: acc.spend + item.spend,
-              };
-            },
-            { views: 0, impressions: 0, contacts: 0, favorites: 0, spend: 0 }
-          );
-          cityMap.set(region, stats);
-        }
-
-        setPreciseItemStats(itemMap);
-        setPreciseCityStats(cityMap);
-      } catch (e) {
-        console.warn('[stats-cache] restore dashboard precise stats:', e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentAccountId, period.from, period.to, periodItems]);
-
   const stats = calculateAccountStats(items, periodKpi);
   const totalSpendWithAccount = stats.totalSpend;
   const adsSpend = Math.max(0, totalSpendWithAccount - otherSpend);
@@ -337,6 +329,7 @@ export default function Dashboard() {
 
   const runPreciseIneffectiveCities = async () => {
     if (preciseCitiesProgress.busy) return;
+    const runCacheKey = preciseCacheKey;
     const targets = cityStats
       .filter((city) => city.overspend > 0 || (city.spend > 0 && city.contacts === 0))
       .filter((city) => !preciseCityStats.has(city.region))
@@ -398,12 +391,15 @@ export default function Dashboard() {
         dateTo: period.to,
         itemIds: ids,
       });
+      if (preciseCacheKeyRef.current !== runCacheKey) return;
       if (spend) {
         next.set(city.region, {
           ...metricTotals,
           spend: Math.round(spend.total),
         });
-        setPreciseCityStats(new Map(next));
+        const snapshot = new Map(next);
+        setPreciseCityStats(snapshot);
+        savePreciseDashboardCache(runCacheKey, preciseItemStats, snapshot);
       } else {
         failed += 1;
       }
@@ -422,6 +418,7 @@ export default function Dashboard() {
         const eta = Date.now() + 65_000;
         setPreciseCitiesProgress((p) => ({ ...p, nextEta: eta }));
         await new Promise((resolve) => setTimeout(resolve, 65_000));
+        if (preciseCacheKeyRef.current !== runCacheKey) return;
       }
     }
 
@@ -451,6 +448,7 @@ export default function Dashboard() {
 
   const runPrecisePeriodItems = async () => {
     if (preciseItemsProgress.busy) return;
+    const runCacheKey = preciseCacheKey;
     const ids = Array.from(new Set(preciseItemCandidates.map((item) => item.id)));
     if (ids.length === 0) return;
 
@@ -494,6 +492,7 @@ export default function Dashboard() {
         dateTo: period.to,
         itemIds: [id],
       });
+      if (preciseCacheKeyRef.current !== runCacheKey) return;
       if (!exactSpendRows) failedSpend += 1;
       const exactSpend = exactSpendRows
         ? exactSpendRows.reduce((sum, row) => sum + Number(row.total ?? 0), 0)
@@ -512,7 +511,9 @@ export default function Dashboard() {
           period
         );
       }
-      setPreciseItemStats(new Map(next));
+      const snapshot = new Map(next);
+      setPreciseItemStats(snapshot);
+      savePreciseDashboardCache(runCacheKey, snapshot, preciseCityStats);
       setPreciseItemsProgress({
         busy: true,
         done: i + 1,
@@ -528,6 +529,7 @@ export default function Dashboard() {
         const eta = Date.now() + 65_000;
         setPreciseItemsProgress((progress) => ({ ...progress, nextEta: eta }));
         await new Promise((resolve) => setTimeout(resolve, 65_000));
+        if (preciseCacheKeyRef.current !== runCacheKey) return;
       }
     }
 
@@ -1202,22 +1204,6 @@ function groupLabel(t: string) {
     default:
       return 'Аккаунт';
   }
-}
-
-function itemHasPeriodData(item: {
-  views?: number;
-  impressions?: number;
-  contacts?: number;
-  favorites?: number;
-  spend?: number;
-}) {
-  return (
-    Number(item.views ?? 0) > 0 ||
-    Number(item.impressions ?? 0) > 0 ||
-    Number(item.contacts ?? 0) > 0 ||
-    Number(item.favorites ?? 0) > 0 ||
-    Number(item.spend ?? 0) > 0
-  );
 }
 
 function BalanceCard({

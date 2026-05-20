@@ -262,11 +262,11 @@ export default function Insights() {
       <div className="card p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <h2 className="text-lg font-bold text-white">Объявления по бакетам</h2>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2">
             <button
               onClick={() => setBucket('all')}
               className={[
-                'chip',
+                'chip min-h-[32px] px-3 py-1',
                 bucket === 'all'
                   ? 'bg-accent/15 text-accent border border-accent/30'
                   : 'bg-ink-800 text-ink-300 border border-ink-700',
@@ -277,7 +277,7 @@ export default function Insights() {
             <button
               onClick={() => setBucket('top')}
               className={[
-                'chip',
+                'chip min-h-[32px] px-3 py-1',
                 bucket === 'top'
                   ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
                   : 'bg-ink-800 text-ink-300 border border-ink-700',
@@ -288,7 +288,7 @@ export default function Insights() {
             <button
               onClick={() => setBucket('bottom')}
               className={[
-                'chip',
+                'chip min-h-[32px] px-3 py-1',
                 bucket === 'bottom'
                   ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
                   : 'bg-ink-800 text-ink-300 border border-ink-700',
@@ -360,7 +360,7 @@ function SuccessfulImages({ items, loading }: { items: ItemScore[]; loading: boo
         <TrendingUp className="w-5 h-5 text-emerald-300" />
         <h2 className="text-lg font-bold text-white">Первые фото успешных объявлений</h2>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         {items.map(({ item, cpl, conversion }) => (
           <Link
             key={item.id}
@@ -522,7 +522,7 @@ function BucketCard({
         </div>
         <h3 className="font-semibold text-white">{title}</h3>
       </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2 text-sm">
         <Stat label="Объявлений" value={String(summary.count)} />
         <Stat
           label="Средний CPL"

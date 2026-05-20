@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Wand2 } from 'lucide-react';
 import {
   Bar,
@@ -31,7 +31,6 @@ import {
   subcategoryName,
 } from '../lib/analytics';
 import { ProgressBar } from '../components/ProgressBar';
-import { repository } from '../services/Repository';
 
 function loadPreciseCityCache(key: string): Map<string, number> {
   try {
@@ -88,8 +87,10 @@ export default function Analytics() {
     total: number;
     nextEta?: number;
   }>({ busy: false, done: 0, total: 0 });
+  const preciseCityCacheKeyRef = useRef(preciseCityCacheKey);
 
   useEffect(() => {
+    preciseCityCacheKeyRef.current = preciseCityCacheKey;
     setPreciseCity(loadPreciseCityCache(preciseCityCacheKey));
     setPreciseProgress({ busy: false, done: 0, total: 0 });
   }, [preciseCityCacheKey]);
@@ -160,78 +161,6 @@ export default function Analytics() {
       }),
     [itemsForPeriod, category, region, status]
   );
-
-  useEffect(() => {
-    if (!currentAccountId || filteredItems.length === 0) return;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const rows = await repository.loadItemDailyStats(
-          currentAccountId,
-          period.from,
-          period.to
-        );
-        if (cancelled) return;
-
-        const exactRows = rows.filter((row) => row.accuracy === 'exact');
-        if (exactRows.length === 0) return;
-
-        const exactSpendByItem = new Map<string, number>();
-        for (const row of exactRows) {
-          const key = String(row.itemId);
-          exactSpendByItem.set(
-            key,
-            (exactSpendByItem.get(key) ?? 0) + Number(row.spend ?? 0)
-          );
-        }
-
-        const idsByCity = new Map<string, string[]>();
-        for (const item of filteredItems) {
-          if (!itemHasPeriodData(item)) continue;
-          const key = String(item.id);
-          idsByCity.set(item.region, [...(idsByCity.get(item.region) ?? []), key]);
-        }
-
-        const exactCitySpend = new Map<string, number>();
-        for (const [city, ids] of idsByCity.entries()) {
-          if (ids.length === 0 || !ids.every((id) => exactSpendByItem.has(id))) continue;
-          exactCitySpend.set(
-            city,
-            ids.reduce((sum, id) => sum + (exactSpendByItem.get(id) ?? 0), 0)
-          );
-        }
-        if (exactCitySpend.size === 0) return;
-
-        setPreciseCity((prev) => {
-          const next = new Map(prev);
-          let changed = false;
-          for (const [city, spend] of exactCitySpend.entries()) {
-            const rounded = Math.round(spend);
-            if (next.get(city) !== rounded) {
-              next.set(city, rounded);
-              changed = true;
-            }
-          }
-          if (!changed) return prev;
-          savePreciseCityCache(preciseCityCacheKey, next);
-          return next;
-        });
-      } catch (e) {
-        console.warn('[stats-cache] restore analytics precise city spend:', e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    currentAccountId,
-    filteredItems,
-    period.from,
-    period.to,
-    preciseCityCacheKey,
-  ]);
 
   // Метрики за выбранный период по выбранным items.
   // Расход в metrics — только per-item VAS из operations (без распределённого CPx),
@@ -383,6 +312,7 @@ export default function Analytics() {
    */
   const runPreciseCityCalc = async () => {
     if (preciseProgress.busy) return;
+    const runCacheKey = preciseCityCacheKey;
     const targets = [...regData]
       .filter((r) => !preciseCity.has(r.region))
       .sort((a, b) => b.spend - a.spend);
@@ -406,16 +336,18 @@ export default function Analytics() {
         dateTo: period.to,
         itemIds: itemIdsForCity,
       });
+      if (preciseCityCacheKeyRef.current !== runCacheKey) return;
       if (r) newMap.set(city.region, Math.round(r.total));
       const snapshot = new Map(newMap);
       setPreciseCity(snapshot);
-      savePreciseCityCache(preciseCityCacheKey, snapshot);
+      savePreciseCityCache(runCacheKey, snapshot);
       setPreciseProgress({ busy: true, done: i + 1, total });
       // Между запросами задержка 65 сек (rate limit 1/мин), кроме последнего
       if (i < targets.length - 1) {
         const eta = Date.now() + 65_000;
         setPreciseProgress((p) => ({ ...p, nextEta: eta }));
         await new Promise((res) => setTimeout(res, 65_000));
+        if (preciseCityCacheKeyRef.current !== runCacheKey) return;
       }
     }
     setPreciseProgress({ busy: false, done: total, total });
@@ -775,22 +707,6 @@ function CityRow({
         </div>
       </div>
     </div>
-  );
-}
-
-function itemHasPeriodData(item: {
-  views?: number;
-  impressions?: number;
-  contacts?: number;
-  favorites?: number;
-  spend?: number;
-}) {
-  return (
-    Number(item.views ?? 0) > 0 ||
-    Number(item.impressions ?? 0) > 0 ||
-    Number(item.contacts ?? 0) > 0 ||
-    Number(item.favorites ?? 0) > 0 ||
-    Number(item.spend ?? 0) > 0
   );
 }
 

@@ -23,10 +23,8 @@ import {
 } from '../lib/compare';
 import { calcCpl, formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
-import type { AvitoItem, ItemDailyStat, ItemMetrics } from '../types';
-import { repository } from '../services/Repository';
+import type { AvitoItem, ItemMetrics } from '../types';
 import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
-import { SUPABASE_ENABLED } from '../services/supabase';
 
 type Mode = 'date' | 'csv';
 type DateRange = { from: string; to: string };
@@ -181,91 +179,6 @@ export default function Compare() {
     setPreciseItems(new Map());
     setPreciseProgress({ busy: false, done: 0, total: 0 });
   }, [mode, dateA.from, dateA.to, dateB.from, dateB.to]);
-
-  useEffect(() => {
-    if (
-      mode !== 'date' ||
-      !SUPABASE_ENABLED ||
-      !currentAccountId ||
-      !baseComparison ||
-      !datePeriodItems
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    const dateFrom = minDate(dateA.from, dateB.from);
-    const dateTo = maxDate(dateA.to, dateB.to);
-
-    void (async () => {
-      try {
-        const rows = await repository.loadItemDailyStats(currentAccountId, dateFrom, dateTo);
-        if (cancelled) return;
-        const exactRows = rows.filter((row) => row.accuracy === 'exact');
-        if (exactRows.length === 0) return;
-
-        const rowsByItem = new Map<string, ItemDailyStat[]>();
-        for (const row of exactRows) {
-          const key = String(row.itemId);
-          rowsByItem.set(key, [...(rowsByItem.get(key) ?? []), row]);
-        }
-
-        const itemMap = new Map<string, PrecisePair>();
-        for (const item of baseComparison.items) {
-          const itemRows = rowsByItem.get(String(item.itemId)) ?? [];
-          if (itemRows.length === 0) continue;
-          const pair = {
-            a: sumDailyStatRowsForRange(itemRows, dateA),
-            b: sumDailyStatRowsForRange(itemRows, dateB),
-          };
-          if (pair.a > 0 || pair.b > 0) itemMap.set(String(item.itemId), pair);
-        }
-
-        const exactItemIds = new Set(exactRows.map((row) => String(row.itemId)));
-        const allPeriodItems = [...datePeriodItems.a, ...datePeriodItems.b];
-        const cityMap = new Map<string, PrecisePair>();
-        for (const city of baseComparison.cities) {
-          const cityItemIds = Array.from(
-            new Set(
-              allPeriodItems
-                .filter((it) => cleanRegionName(it.region) === city.region)
-                .map((it) => String(it.id))
-            )
-          );
-          if (
-            cityItemIds.length === 0 ||
-            !cityItemIds.every((itemId) => exactItemIds.has(itemId))
-          ) {
-            continue;
-          }
-          const cityRows = cityItemIds.flatMap((itemId) => rowsByItem.get(itemId) ?? []);
-          const pair = {
-            a: sumDailyStatRowsForRange(cityRows, dateA),
-            b: sumDailyStatRowsForRange(cityRows, dateB),
-          };
-          if (pair.a > 0 || pair.b > 0) cityMap.set(city.region, pair);
-        }
-
-        if (itemMap.size > 0) setPreciseItems(itemMap);
-        if (cityMap.size > 0) setPreciseCities(cityMap);
-      } catch (e) {
-        console.warn('[stats-cache] restore precise comparison:', e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    baseComparison,
-    currentAccountId,
-    dateA.from,
-    dateA.to,
-    dateB.from,
-    dateB.to,
-    datePeriodItems,
-    mode,
-  ]);
 
   const runPreciseExpenses = async () => {
     if (mode !== 'date' || !baseComparison || !datePeriodItems || preciseProgress.busy) return;
@@ -528,17 +441,6 @@ function sumRowsForRange(
   );
 }
 
-function sumDailyStatRowsForRange(
-  rows: Array<{ date: string; spend: number }>,
-  range: DateRange
-): number {
-  return Math.round(
-    rows
-      .filter((r) => r.date >= range.from && r.date <= range.to)
-      .reduce((s, r) => s + Number(r.spend ?? 0), 0)
-  );
-}
-
 function withPreciseSpend<T extends CityDiff | ItemDiff>(row: T, pair: PrecisePair): T {
   const aCpl = calcCpl(pair.a, row.a.contacts);
   const bCpl = calcCpl(pair.b, row.b.contacts);
@@ -585,17 +487,17 @@ function DateRangeInput({
       <div className="text-[11px] uppercase tracking-wider text-ink-400 mb-1">
         {label}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
         <input
           type="date"
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={value.from}
           onChange={(e) => onChange({ ...value, from: e.target.value })}
         />
-        <span className="text-ink-500">—</span>
+        <span className="hidden sm:inline text-ink-500">—</span>
         <input
           type="date"
-          className="input w-auto"
+          className="input w-full sm:w-auto"
           value={value.to}
           onChange={(e) => onChange({ ...value, to: e.target.value })}
         />
