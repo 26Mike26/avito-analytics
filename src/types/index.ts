@@ -168,8 +168,8 @@ export type AccountPeriodCacheEntry = {
       date: string;
       promotion: number;
       presence: number;
-      commission?: number;
-      rest?: number;
+      commission: number;
+      rest: number;
       ads: number;
       total: number;
     }>;
@@ -217,8 +217,8 @@ export type AccountData = {
       date: string;
       promotion: number;
       presence: number;
-      commission?: number;
-      rest?: number;
+      commission: number;
+      rest: number;
       ads: number;
       total: number;
     }>;

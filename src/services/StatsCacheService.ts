@@ -52,7 +52,7 @@ export function itemDailyStatsFromExactSpendRows(
   accountId: string,
   itemId: string,
   metrics: ItemMetrics[],
-  spendRows: FilteredSpendingsByDate[]
+  spendRows: FilteredSpendingsByDate
 ): ItemDailyStat[] {
   const metricByDate = new Map(
     metrics

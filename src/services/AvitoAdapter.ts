@@ -214,20 +214,24 @@ export type SpendingsBreakdown = {
   }>;
 };
 
-export type FilteredSpendingsByDate = Array<{
+export type FilteredSpendingsByDateRow = {
   date: string;
   ads: number;
   total: number;
-}>;
+};
 
-export type FilteredItemTotals = Array<{
+export type FilteredSpendingsByDate = FilteredSpendingsByDateRow[];
+
+export type FilteredItemTotal = {
   itemId: string;
   views: number;
   impressions: number;
   contacts: number;
   favorites: number;
   spend: number;
-}>;
+};
+
+export type FilteredItemTotals = FilteredItemTotal[];
 
 /** Баланс аккаунта в Авито. */
 export type AvitoBalance = {
@@ -1086,9 +1090,9 @@ export class AvitoAdapter implements IAvitoAdapter {
     const requestedIds = new Set(opts.itemIds.map((id) => String(id)));
     const requestIds = opts.itemIds.length > 250 ? [] : opts.itemIds;
 
-    const fallbackV1 = async (): Promise<FilteredItemTotals[] | null> => {
+    const fallbackV1 = async (): Promise<FilteredItemTotals | null> => {
       try {
-        const byItem = new Map<string, FilteredItemTotals>();
+        const byItem = new Map<string, FilteredItemTotal>();
         for (const id of opts.itemIds) {
           byItem.set(String(id), {
             itemId: String(id),
@@ -1192,7 +1196,7 @@ export class AvitoAdapter implements IAvitoAdapter {
       return items
         .filter((row) => requestedIds.size === 0 || requestedIds.has(String(row.itemId)))
         .map((row) => {
-          const totals = (row.stats ?? []).reduce(
+          const totals = (row.stats ?? []).reduce<Omit<FilteredItemTotal, 'itemId'>>(
             (acc, stat) => ({
               views: acc.views + Number(stat.views ?? 0),
               impressions: acc.impressions + Number(stat.impressions ?? 0),

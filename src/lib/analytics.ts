@@ -184,7 +184,7 @@ export function subcategoryName(category: string): string {
     .split(/[>/|]/)
     .map((p) => p.trim())
     .filter(Boolean);
-  return parts.at(-1) || category || 'Без категории';
+  return parts[parts.length - 1] || category || 'Без категории';
 }
 
 export function categoryAverages(items: AvitoItem[]) {
