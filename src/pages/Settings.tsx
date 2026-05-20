@@ -12,6 +12,7 @@ import {
 import { Layout } from '../components/Layout';
 import { useStore } from '../store/useStore';
 import { Badge } from '../components/Badge';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { IntegrationMode } from '../types';
 import { AvitoAdapter } from '../services/AvitoAdapter';
 
@@ -42,6 +43,7 @@ export default function Settings() {
   const [importInfo, setImportInfo] = useState<string | null>(null);
   const [importTone, setImportTone] = useState<'ok' | 'warn' | 'err'>('ok');
   const [busy, setBusy] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
   useEffect(() => {
     setDraft(integration);
@@ -320,7 +322,7 @@ export default function Settings() {
           </button>
           <button
             className="btn-ghost w-full"
-            onClick={() => resetToDemo()}
+            onClick={() => setResetConfirmOpen(true)}
             title="Сбросить к демо-данным"
           >
             <RotateCcw className="w-4 h-4" /> Сбросить к демо
@@ -332,6 +334,17 @@ export default function Settings() {
           </div>
         </aside>
       </div>
+      <ConfirmDialog
+        open={resetConfirmOpen}
+        title="Сбросить аккаунт к демо?"
+        description="Текущие данные активного аккаунта будут заменены демо-данными. Отменить действие не получится."
+        confirmText="Сбросить"
+        onCancel={() => setResetConfirmOpen(false)}
+        onConfirm={() => {
+          void resetToDemo();
+          setResetConfirmOpen(false);
+        }}
+      />
     </Layout>
   );
 }
