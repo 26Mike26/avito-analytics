@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { AccountSwitcher } from './AccountSwitcher';
+import { ConfirmDialog } from './ConfirmDialog';
 import { ThemeToggle } from './ThemeToggle';
 
 export function Header({
@@ -30,6 +31,7 @@ export function Header({
     (s) => s.recommendations.filter((r) => r.status === 'new' && r.priority === 'high').length
   );
   const [menuOpen, setMenuOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -141,8 +143,8 @@ export function Header({
               </Link>
               <button
                 onClick={() => {
-                  logout();
-                  navigate('/login', { replace: true });
+                  setMenuOpen(false);
+                  setLogoutConfirmOpen(true);
                 }}
                 className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-rose-500/10 text-rose-300 inline-flex items-center gap-2"
               >
@@ -152,6 +154,18 @@ export function Header({
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={logoutConfirmOpen}
+        title="Выйти из профиля?"
+        description="Текущая сессия будет завершена. Данные аккаунтов останутся сохранены."
+        confirmText="Выйти"
+        onCancel={() => setLogoutConfirmOpen(false)}
+        onConfirm={() => {
+          setLogoutConfirmOpen(false);
+          logout();
+          navigate('/login', { replace: true });
+        }}
+      />
     </header>
   );
 }
