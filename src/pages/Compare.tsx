@@ -415,7 +415,7 @@ export default function Compare() {
           </div>
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <button
-              className="chip bg-ink-800 text-ink-200 hover:text-white border border-ink-700"
+              className="chip min-h-[32px] px-3 py-1 bg-ink-800 text-ink-200 hover:text-white border border-ink-700"
               onClick={() => {
                 setDateA(ranges.prevWeek);
                 setDateB(ranges.thisWeek);
@@ -424,7 +424,7 @@ export default function Compare() {
               Прошлая неделя vs текущая
             </button>
             <button
-              className="chip bg-ink-800 text-ink-200 hover:text-white border border-ink-700"
+              className="chip min-h-[32px] px-3 py-1 bg-ink-800 text-ink-200 hover:text-white border border-ink-700"
               onClick={() => {
                 setDateA(ranges.prev30);
                 setDateB(ranges.this30);
