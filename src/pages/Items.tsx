@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowDownRight,
@@ -435,6 +435,11 @@ function BidInput({
 }) {
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    if (!edit) setDraft(String(value));
+  }, [edit, value]);
+
   if (!edit) {
     return (
       <button
