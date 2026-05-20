@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PeriodPicker } from '../components/PeriodPicker';
 import { useStore, type AccountApiSyncResult } from '../store/useStore';
 import type { AccountData } from '../types';
@@ -73,6 +74,7 @@ export default function Accounts() {
   const [syncing, setSyncing] = useState(false);
   const [cacheLoading, setCacheLoading] = useState(false);
   const [syncResults, setSyncResults] = useState<AccountApiSyncResult[]>([]);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const userAccounts = useMemo(
     () =>
@@ -182,6 +184,8 @@ export default function Accounts() {
     renameAccount(account.id, editName.trim() || account.name);
     setEditing(null);
   };
+
+  const pendingDeleteAccount = pendingDeleteId ? accounts[pendingDeleteId] : null;
 
   return (
     <Layout
@@ -399,11 +403,7 @@ export default function Accounts() {
                       {userAccounts.length > 1 && (
                         <button
                           className="btn-danger"
-                          onClick={() => {
-                            if (confirm(`Удалить аккаунт «${account.name}»? Все его данные будут стёрты.`)) {
-                              removeAccount(account.id);
-                            }
-                          }}
+                          onClick={() => setPendingDeleteId(account.id)}
                         >
                           <Trash2 className="w-4 h-4" /> Удалить
                         </button>
@@ -450,6 +450,22 @@ export default function Accounts() {
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(pendingDeleteAccount)}
+        title="Удалить аккаунт?"
+        description={
+          pendingDeleteAccount
+            ? `Аккаунт «${pendingDeleteAccount.name}» и все его данные будут удалены из платформы. Отменить действие не получится.`
+            : ''
+        }
+        confirmText="Удалить"
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          if (pendingDeleteAccount) removeAccount(pendingDeleteAccount.id);
+          setPendingDeleteId(null);
+        }}
+      />
     </Layout>
   );
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Download, FileText, RefreshCw, Trash2 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Empty } from '../components/Empty';
 import { PeriodPicker, type PeriodValue } from '../components/PeriodPicker';
 import { lastNDaysRange } from '../lib/analytics';
@@ -274,6 +275,7 @@ export default function ActionLog() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [reportPeriod, setReportPeriod] = useState<PeriodValue>(() => lastNDaysRange(7));
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
   const avitoLog = useMemo(() => log.filter((entry) => entry.source === 'avito'), [log]);
   const types = useMemo(() => Array.from(new Set(avitoLog.map((l) => l.type))), [avitoLog]);
@@ -399,9 +401,7 @@ export default function ActionLog() {
           </button>
           <button
             className="btn-danger"
-            onClick={() => {
-              if (confirm('Очистить журнал действий? Это нельзя отменить.')) clearLog();
-            }}
+            onClick={() => setClearConfirmOpen(true)}
           >
             <Trash2 className="w-4 h-4" /> Очистить
           </button>
@@ -490,6 +490,18 @@ export default function ActionLog() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        title="Очистить журнал действий?"
+        description="Это удалит все события журнала в текущем профиле. Отменить действие не получится."
+        confirmText="Очистить"
+        onCancel={() => setClearConfirmOpen(false)}
+        onConfirm={() => {
+          clearLog();
+          setClearConfirmOpen(false);
+        }}
+      />
     </Layout>
   );
 }
