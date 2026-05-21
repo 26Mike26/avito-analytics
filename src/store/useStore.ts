@@ -703,8 +703,17 @@ export const useStore = create<Store>((set, get) => {
           };
         }
         let accountIds = remoteAccounts.map((a) => a.id);
+        const ownedAccountIds = remoteAccounts
+          .filter((a) => a.ownerId === user.id)
+          .map((a) => a.id);
+        const linkedClientAccountIds = remoteAccounts
+          .filter((a) => a.ownerId !== user.id)
+          .map((a) => a.id);
+        const inferredClientMode =
+          isClientUser(user) ||
+          (ownedAccountIds.length === 0 && linkedClientAccountIds.length > 0);
 
-        if (accountIds.length === 0 && !isClientUser(user)) {
+        if (accountIds.length === 0 && !inferredClientMode) {
           // Первый вход — создаём стартовый демо-аккаунт и сохраняем в БД
           const demo = createDemoAccount(user.id, 'Демо-аккаунт');
           await repository.saveAccount(demo);
@@ -729,8 +738,13 @@ export const useStore = create<Store>((set, get) => {
           session,
           currentUser: {
             ...user,
+            role: inferredClientMode ? 'client' : user.role ?? 'admin',
             accountIds,
-            clientAccountIds: isClientUser(user) ? accountIds : user.clientAccountIds ?? [],
+            clientAccountIds: inferredClientMode
+              ? linkedClientAccountIds.length > 0
+                ? linkedClientAccountIds
+                : accountIds
+              : user.clientAccountIds ?? [],
           },
           accounts: accs,
           currentAccountId: activeId,
