@@ -120,19 +120,21 @@ export function Header({
           </button>
         )}
 
-        <Link
-          to={clientMode ? '/client/recommendations' : '/recommendations'}
-          className="btn-secondary !px-2 h-10 sm:h-9 relative"
-          title="Уведомления"
-          aria-label="Уведомления"
-        >
-          <Bell className="w-4 h-4" />
-          {recCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center">
-              {recCount}
-            </span>
-          )}
-        </Link>
+        {!clientMode && (
+          <Link
+            to="/recommendations"
+            className="btn-secondary !px-2 h-10 sm:h-9 relative"
+            title="Уведомления"
+            aria-label="Уведомления"
+          >
+            <Bell className="w-4 h-4" />
+            {recCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center">
+                {recCount}
+              </span>
+            )}
+          </Link>
+        )}
 
         {/* Тема light/dark */}
         <ThemeToggle compact />
@@ -170,13 +172,15 @@ export function Header({
                   Управление аккаунтами
                 </Link>
               )}
-              <Link
-                to={clientMode ? '/client/log' : '/log'}
-                onClick={() => setMenuOpen(false)}
-                className="block px-3 py-2 text-sm rounded-lg text-ink-200 hover:bg-ink-850"
-              >
-                Журнал действий
-              </Link>
+              {!clientMode && (
+                <Link
+                  to="/log"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-3 py-2 text-sm rounded-lg text-ink-200 hover:bg-ink-850"
+                >
+                  Журнал действий
+                </Link>
+              )}
               <button
                 onClick={() => {
                   setMenuOpen(false);

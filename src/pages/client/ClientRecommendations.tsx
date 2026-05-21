@@ -53,7 +53,7 @@ export default function ClientRecommendations() {
 
   return (
     <Layout
-      title="Клиентские рекомендации"
+      title="Рекомендации и инсайты"
       subtitle="Read-only список проблем и гипотез по доступным аккаунтам"
     >
       <div className="card p-4 sm:p-5 mb-5">

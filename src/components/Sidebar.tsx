@@ -37,9 +37,9 @@ const clientItems: Array<{
   label: string;
   aliases?: string[];
 }> = [
-  { to: '/client', icon: LayoutDashboard, label: 'Дашборд клиента' },
+  { to: '/client', icon: LayoutDashboard, label: 'Дашборд' },
   { to: '/client/analytics', icon: BarChart3, label: 'Аналитика' },
-  { to: '/client/recommendations', icon: Lightbulb, label: 'Рекомендации' },
+  { to: '/client/recommendations', icon: Lightbulb, label: 'Рекомендации и инсайты' },
   { to: '/client/log', icon: History, label: 'Журнал действий' },
 ];
 
