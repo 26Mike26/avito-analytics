@@ -13,6 +13,10 @@ import Accounts from './pages/Accounts';
 import ActionLog from './pages/ActionLog';
 import Compare from './pages/Compare';
 import Insights from './pages/Insights';
+import ClientDashboard from './pages/client/ClientDashboard';
+import ClientAnalytics from './pages/client/ClientAnalytics';
+import ClientRecommendations from './pages/client/ClientRecommendations';
+import ClientActionLog from './pages/client/ClientActionLog';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 export default function App() {
@@ -21,9 +25,41 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route
-        path="/"
+        path="/client"
         element={
           <ProtectedRoute>
+            <ClientDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/client/analytics"
+        element={
+          <ProtectedRoute>
+            <ClientAnalytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/client/recommendations"
+        element={
+          <ProtectedRoute>
+            <ClientRecommendations />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/client/log"
+        element={
+          <ProtectedRoute>
+            <ClientActionLog />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute access="platform">
             <Dashboard />
           </ProtectedRoute>
         }
@@ -31,7 +67,7 @@ export default function App() {
       <Route
         path="/kpi"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <KpiCenter />
           </ProtectedRoute>
         }
@@ -39,7 +75,7 @@ export default function App() {
       <Route
         path="/items"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Items />
           </ProtectedRoute>
         }
@@ -47,7 +83,7 @@ export default function App() {
       <Route
         path="/items/:id"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <ItemDetail />
           </ProtectedRoute>
         }
@@ -55,7 +91,7 @@ export default function App() {
       <Route
         path="/bids"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Bids />
           </ProtectedRoute>
         }
@@ -63,7 +99,7 @@ export default function App() {
       <Route
         path="/recommendations"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Recommendations />
           </ProtectedRoute>
         }
@@ -71,7 +107,7 @@ export default function App() {
       <Route
         path="/analytics"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Analytics />
           </ProtectedRoute>
         }
@@ -79,7 +115,7 @@ export default function App() {
       <Route
         path="/compare"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Compare />
           </ProtectedRoute>
         }
@@ -87,7 +123,7 @@ export default function App() {
       <Route
         path="/insights"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Insights />
           </ProtectedRoute>
         }
@@ -95,7 +131,7 @@ export default function App() {
       <Route
         path="/accounts"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Accounts />
           </ProtectedRoute>
         }
@@ -103,7 +139,7 @@ export default function App() {
       <Route
         path="/log"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <ActionLog />
           </ProtectedRoute>
         }
@@ -111,7 +147,7 @@ export default function App() {
       <Route
         path="/settings"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute access="platform">
             <Settings />
           </ProtectedRoute>
         }

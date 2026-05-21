@@ -40,6 +40,15 @@ create table if not exists public.accounts (
 );
 create index if not exists accounts_owner_idx on public.accounts(owner_id);
 
+create table if not exists public.account_clients (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  client_user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (account_id, client_user_id)
+);
+create index if not exists account_clients_user_idx
+  on public.account_clients(client_user_id);
+
 create table if not exists public.items (
   account_id uuid not null references public.accounts(id) on delete cascade,
   item_id text not null,
@@ -149,6 +158,7 @@ alter table public.action_log
 -- ─────────────────────────── RLS ─────────────────────────────
 
 alter table public.accounts enable row level security;
+alter table public.account_clients enable row level security;
 alter table public.items enable row level security;
 alter table public.metrics enable row level security;
 alter table public.bid_history enable row level security;
@@ -165,6 +175,25 @@ create policy "accounts owners only" on public.accounts
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
 
+drop policy if exists "accounts linked clients read" on public.accounts;
+create policy "accounts linked clients read" on public.accounts
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = accounts.id and ac.client_user_id = auth.uid()));
+
+drop policy if exists "account_clients owner manage" on public.account_clients;
+create policy "account_clients owner manage" on public.account_clients
+  for all
+  using (exists (select 1 from public.accounts a
+                 where a.id = account_clients.account_id and a.owner_id = auth.uid()))
+  with check (exists (select 1 from public.accounts a
+                      where a.id = account_clients.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "account_clients client read" on public.account_clients;
+create policy "account_clients client read" on public.account_clients
+  for select
+  using (client_user_id = auth.uid());
+
 -- items / metrics / bid_history / notes: разрешение через JOIN с accounts
 drop policy if exists "items via account" on public.items;
 create policy "items via account" on public.items
@@ -174,6 +203,12 @@ create policy "items via account" on public.items
   with check (exists (select 1 from public.accounts a
                       where a.id = items.account_id and a.owner_id = auth.uid()));
 
+drop policy if exists "items linked clients read" on public.items;
+create policy "items linked clients read" on public.items
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = items.account_id and ac.client_user_id = auth.uid()));
+
 drop policy if exists "metrics via account" on public.metrics;
 create policy "metrics via account" on public.metrics
   for all
@@ -181,6 +216,12 @@ create policy "metrics via account" on public.metrics
                  where a.id = metrics.account_id and a.owner_id = auth.uid()))
   with check (exists (select 1 from public.accounts a
                       where a.id = metrics.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "metrics linked clients read" on public.metrics;
+create policy "metrics linked clients read" on public.metrics
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = metrics.account_id and ac.client_user_id = auth.uid()));
 
 drop policy if exists "bid_history via account" on public.bid_history;
 create policy "bid_history via account" on public.bid_history
@@ -205,6 +246,15 @@ create policy "action_log owner only" on public.action_log
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
+drop policy if exists "action_log linked clients read" on public.action_log;
+create policy "action_log linked clients read" on public.action_log
+  for select
+  using (
+    source = 'avito'
+    and exists (select 1 from public.account_clients ac
+                where ac.account_id = action_log.account_id and ac.client_user_id = auth.uid())
+  );
+
 drop policy if exists "account_cache via account" on public.account_cache;
 create policy "account_cache via account" on public.account_cache
   for all
@@ -212,6 +262,12 @@ create policy "account_cache via account" on public.account_cache
                  where a.id = account_cache.account_id and a.owner_id = auth.uid()))
   with check (exists (select 1 from public.accounts a
                       where a.id = account_cache.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "account_cache linked clients read" on public.account_cache;
+create policy "account_cache linked clients read" on public.account_cache
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = account_cache.account_id and ac.client_user_id = auth.uid()));
 
 drop policy if exists "item_daily_stats via account" on public.item_daily_stats;
 create policy "item_daily_stats via account" on public.item_daily_stats
@@ -221,6 +277,12 @@ create policy "item_daily_stats via account" on public.item_daily_stats
   with check (exists (select 1 from public.accounts a
                       where a.id = item_daily_stats.account_id and a.owner_id = auth.uid()));
 
+drop policy if exists "item_daily_stats linked clients read" on public.item_daily_stats;
+create policy "item_daily_stats linked clients read" on public.item_daily_stats
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = item_daily_stats.account_id and ac.client_user_id = auth.uid()));
+
 drop policy if exists "account_daily_spend via account" on public.account_daily_spend;
 create policy "account_daily_spend via account" on public.account_daily_spend
   for all
@@ -228,6 +290,12 @@ create policy "account_daily_spend via account" on public.account_daily_spend
                  where a.id = account_daily_spend.account_id and a.owner_id = auth.uid()))
   with check (exists (select 1 from public.accounts a
                       where a.id = account_daily_spend.account_id and a.owner_id = auth.uid()));
+
+drop policy if exists "account_daily_spend linked clients read" on public.account_daily_spend;
+create policy "account_daily_spend linked clients read" on public.account_daily_spend
+  for select
+  using (exists (select 1 from public.account_clients ac
+                 where ac.account_id = account_daily_spend.account_id and ac.client_user_id = auth.uid()));
 
 -- ─────────────────────────── ПОДСКАЗКА ───────────────────────
 -- После применения: Supabase → Authentication → Sign Up users в UI.

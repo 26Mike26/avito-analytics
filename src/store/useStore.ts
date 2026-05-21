@@ -26,6 +26,7 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
+import { isClientUser } from '../lib/clientAccess';
 import { lastNDaysRange } from '../lib/analytics';
 import {
   AvitoAdapter,
@@ -703,7 +704,7 @@ export const useStore = create<Store>((set, get) => {
         }
         let accountIds = remoteAccounts.map((a) => a.id);
 
-        if (accountIds.length === 0) {
+        if (accountIds.length === 0 && !isClientUser(user)) {
           // Первый вход — создаём стартовый демо-аккаунт и сохраняем в БД
           const demo = createDemoAccount(user.id, 'Демо-аккаунт');
           await repository.saveAccount(demo);
@@ -714,26 +715,30 @@ export const useStore = create<Store>((set, get) => {
           accountIds = [demo.id];
         }
         const remoteLog = onlyAvitoLog(
-          await repository.loadActionLog(user.id).catch(() => [])
+          await repository.loadActionLog(user.id, accountIds).catch(() => [])
         );
         const persistedActive = loadActiveId();
         const activeId =
           persistedActive && accountIds.includes(persistedActive)
             ? persistedActive
-            : accountIds[0];
-        const acc = accs[activeId];
+            : accountIds[0] ?? null;
+        const acc = activeId ? accs[activeId] : null;
         saveActiveId(activeId);
         saveAccounts(accs);
         set({
           session,
-          currentUser: { ...user, accountIds },
+          currentUser: {
+            ...user,
+            accountIds,
+            clientAccountIds: isClientUser(user) ? accountIds : user.clientAccountIds ?? [],
+          },
           accounts: accs,
           currentAccountId: activeId,
           actionLog: remoteLog,
-          ...buildMirrorForPeriod(acc, get().analyticsPeriod),
+          ...(acc ? buildMirrorForPeriod(acc, get().analyticsPeriod) : {}),
           initialized: true,
         });
-        adapter.setSettings(acc.integration);
+        if (acc) adapter.setSettings(acc.integration);
         get().setAnalyticsPeriod(get().analyticsPeriod);
         return;
       }
@@ -875,6 +880,7 @@ export const useStore = create<Store>((set, get) => {
     createAccount: (name) => {
       const user = get().currentUser;
       if (!user) throw new Error('Нет активной сессии');
+      if (isClientUser(user)) throw new Error('Клиентский доступ не может создавать аккаунты.');
       const acc = createDemoAccount(user.id, name || `Аккаунт ${user.accountIds.length + 1}`);
       const accs = { ...get().accounts, [acc.id]: acc };
       const updatedUser = { ...user, accountIds: [...user.accountIds, acc.id] };

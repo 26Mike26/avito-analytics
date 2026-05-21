@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, ChevronDown, Plus, Settings as SettingsIcon } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { isClientUser, visibleAccountsForUser } from '../lib/clientAccess';
 
 export function AccountSwitcher() {
   const accounts = useStore((s) => s.accounts);
@@ -27,9 +28,8 @@ export function AccountSwitcher() {
   }, []);
 
   if (!user) return null;
-  const userAccounts = user.accountIds
-    .map((id) => accounts[id])
-    .filter(Boolean);
+  const clientMode = isClientUser(user);
+  const userAccounts = visibleAccountsForUser(user, accounts);
   const current = currentId ? accounts[currentId] : null;
 
   return (
@@ -86,26 +86,28 @@ export function AccountSwitcher() {
               </li>
             ))}
           </ul>
-          <div className="border-t border-ink-800 mt-2 pt-2 flex gap-1">
-            <Link
-              to="/accounts"
-              onClick={() => setOpen(false)}
-              className="btn-ghost flex-1 justify-start"
-              role="menuitem"
-            >
-              <Plus className="w-4 h-4" /> Добавить аккаунт
-            </Link>
-            <Link
-              to="/accounts"
-              onClick={() => setOpen(false)}
-              className="btn-ghost"
-              title="Управление аккаунтами"
-              aria-label="Управление аккаунтами"
-              role="menuitem"
-            >
-              <SettingsIcon className="w-4 h-4" />
-            </Link>
-          </div>
+          {!clientMode && (
+            <div className="border-t border-ink-800 mt-2 pt-2 flex gap-1">
+              <Link
+                to="/accounts"
+                onClick={() => setOpen(false)}
+                className="btn-ghost flex-1 justify-start"
+                role="menuitem"
+              >
+                <Plus className="w-4 h-4" /> Добавить аккаунт
+              </Link>
+              <Link
+                to="/accounts"
+                onClick={() => setOpen(false)}
+                className="btn-ghost"
+                title="Управление аккаунтами"
+                aria-label="Управление аккаунтами"
+                role="menuitem"
+              >
+                <SettingsIcon className="w-4 h-4" />
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

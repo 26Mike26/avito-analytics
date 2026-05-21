@@ -12,6 +12,7 @@ import { useStore } from '../store/useStore';
 import { AccountSwitcher } from './AccountSwitcher';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ThemeToggle } from './ThemeToggle';
+import { isClientUser } from '../lib/clientAccess';
 
 export function Header({
   title,
@@ -29,6 +30,7 @@ export function Header({
   const loading = useStore((s) => s.loading);
   const user = useStore((s) => s.currentUser);
   const logout = useStore((s) => s.logout);
+  const clientMode = isClientUser(user);
   const recCount = useStore(
     (s) => s.recommendations.filter((r) => r.status === 'new' && r.priority === 'high').length
   );
@@ -88,7 +90,10 @@ export function Header({
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
         {/* Поиск — только на больших экранах */}
         <form
-          className="hidden xl:flex items-center gap-2 bg-ink-850 border border-ink-700 rounded-full px-3 h-9 w-60"
+          className={[
+            'hidden xl:flex items-center gap-2 bg-ink-850 border border-ink-700 rounded-full px-3 h-9 w-60',
+            clientMode ? 'xl:hidden' : '',
+          ].join(' ')}
           onSubmit={submitSearch}
         >
           <Search className="w-4 h-4 text-ink-500" />
@@ -102,19 +107,21 @@ export function Header({
         </form>
 
         {/* Обновить — иконка на мобиле, с подписью на ≥md */}
-        <button
-          onClick={() => reload()}
-          className="btn-secondary !px-2 sm:!px-3 h-10 sm:h-9"
-          disabled={loading}
-          title="Обновить данные"
-          aria-label="Обновить"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          <span className="hidden md:inline">Обновить</span>
-        </button>
+        {!clientMode && (
+          <button
+            onClick={() => reload()}
+            className="btn-secondary !px-2 sm:!px-3 h-10 sm:h-9"
+            disabled={loading}
+            title="Обновить данные"
+            aria-label="Обновить"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <span className="hidden md:inline">Обновить</span>
+          </button>
+        )}
 
         <Link
-          to="/recommendations"
+          to={clientMode ? '/client/recommendations' : '/recommendations'}
           className="btn-secondary !px-2 h-10 sm:h-9 relative"
           title="Уведомления"
           aria-label="Уведомления"
@@ -154,15 +161,17 @@ export function Header({
                 <div className="text-xs text-ink-400 truncate">{user?.email}</div>
               </div>
               <div className="border-t border-ink-800 my-1" />
+              {!clientMode && (
+                <Link
+                  to="/accounts"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-3 py-2 text-sm rounded-lg text-ink-200 hover:bg-ink-850"
+                >
+                  Управление аккаунтами
+                </Link>
+              )}
               <Link
-                to="/accounts"
-                onClick={() => setMenuOpen(false)}
-                className="block px-3 py-2 text-sm rounded-lg text-ink-200 hover:bg-ink-850"
-              >
-                Управление аккаунтами
-              </Link>
-              <Link
-                to="/log"
+                to={clientMode ? '/client/log' : '/log'}
                 onClick={() => setMenuOpen(false)}
                 className="block px-3 py-2 text-sm rounded-lg text-ink-200 hover:bg-ink-850"
               >

@@ -11,8 +11,10 @@ import {
   GitCompare,
   X,
 } from 'lucide-react';
+import { useStore } from '../store/useStore';
+import { isClientUser } from '../lib/clientAccess';
 
-const items: Array<{
+const platformItems: Array<{
   to: string;
   icon: typeof LayoutDashboard;
   label: string;
@@ -29,6 +31,18 @@ const items: Array<{
   { to: '/settings', icon: Settings, label: 'Настройки' },
 ];
 
+const clientItems: Array<{
+  to: string;
+  icon: typeof LayoutDashboard;
+  label: string;
+  aliases?: string[];
+}> = [
+  { to: '/client', icon: LayoutDashboard, label: 'Дашборд клиента' },
+  { to: '/client/analytics', icon: BarChart3, label: 'Аналитика' },
+  { to: '/client/recommendations', icon: Lightbulb, label: 'Рекомендации' },
+  { to: '/client/log', icon: History, label: 'Журнал действий' },
+];
+
 export function Sidebar({
   open = false,
   onClose,
@@ -37,6 +51,9 @@ export function Sidebar({
   onClose?: () => void;
 }) {
   const location = useLocation();
+  const user = useStore((s) => s.currentUser);
+  const clientMode = isClientUser(user);
+  const items = clientMode ? clientItems : platformItems;
 
   return (
     <>
@@ -67,10 +84,10 @@ export function Sidebar({
           </div>
           <div className="leading-tight flex-1 min-w-0">
             <div className="text-[13px] font-extrabold text-white tracking-wide uppercase truncate">
-              Avito · Аналитика
+              {clientMode ? 'Кабинет клиента' : 'Avito · Аналитика'}
             </div>
             <div className="text-[10px] text-ink-400 tracking-wider uppercase">
-              Powered by Genesis
+              {clientMode ? 'Ограниченный доступ' : 'Powered by Genesis'}
             </div>
           </div>
           {/* Кнопка закрытия только на мобильной */}
@@ -128,7 +145,7 @@ export function Sidebar({
           ))}
         </nav>
         <div className="p-4 border-t border-ink-800 text-[10px] uppercase tracking-wider text-ink-500">
-          Демо-режим · данные локальны
+          {clientMode ? 'Только просмотр · данные аккаунтов' : 'Демо-режим · данные локальны'}
         </div>
       </aside>
     </>

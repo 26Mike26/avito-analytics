@@ -129,14 +129,20 @@ export type IntegrationSettings = {
   lastSyncAt?: string;
 };
 
+export type UserRole = 'admin' | 'operator' | 'client';
+
 export type User = {
   id: string;
   email: string;
   name: string;
+  role?: UserRole;
   passwordHash: string;
   passwordSalt: string;
   createdAt: string;
+  /** Основные аккаунты пользователя. Для клиента это список доступных ему аккаунтов. */
   accountIds: string[];
+  /** Явно выданный клиентский доступ к аккаунтам владельца. */
+  clientAccountIds?: string[];
 };
 
 export type Session = {

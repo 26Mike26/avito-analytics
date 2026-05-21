@@ -1,16 +1,24 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useStore } from '../store/useStore';
+import { isClientUser } from '../lib/clientAccess';
 
-export function ProtectedRoute({ children }: { children: ReactNode }) {
+export function ProtectedRoute({
+  children,
+  access = 'all',
+}: {
+  children: ReactNode;
+  access?: 'all' | 'platform';
+}) {
   const session = useStore((s) => s.session);
+  const user = useStore((s) => s.currentUser);
   const bootstrap = useStore((s) => s.bootstrap);
   const initialized = useStore((s) => s.initialized);
   const location = useLocation();
-  const [ready, setReady] = useState(() => initialized || !!session);
+  const [ready, setReady] = useState(() => initialized || (!!session && !!user));
 
   useEffect(() => {
-    if (initialized || session) {
+    if (initialized || (session && user)) {
       setReady(true);
       return;
     }
@@ -21,7 +29,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [bootstrap, initialized, session]);
+  }, [bootstrap, initialized, session, user]);
 
   if (!ready) {
     return (
@@ -33,6 +41,9 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  if (access === 'platform' && isClientUser(user)) {
+    return <Navigate to="/client" replace />;
   }
   return <>{children}</>;
 }

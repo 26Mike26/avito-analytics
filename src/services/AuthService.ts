@@ -91,10 +91,12 @@ export class AuthService {
         id: u.id,
         email: u.email ?? '',
         name: (u.user_metadata?.name as string) ?? (u.email?.split('@')[0] ?? 'Пользователь'),
+        role: (u.user_metadata?.role as User['role']) ?? 'admin',
         passwordHash: '',
         passwordSalt: '',
         createdAt: u.created_at ?? new Date().toISOString(),
         accountIds: [], // в supabase-режиме accountIds читаются отдельно из таблицы accounts
+        clientAccountIds: (u.user_metadata?.client_account_ids as string[] | undefined) ?? [],
       };
     }
     const session = this.loadSession();
@@ -116,10 +118,12 @@ export class AuthService {
         id: u.id,
         email: u.email ?? email,
         name: name || email.split('@')[0],
+        role: 'admin',
         passwordHash: '',
         passwordSalt: '',
         createdAt: u.created_at ?? new Date().toISOString(),
         accountIds: [],
+        clientAccountIds: [],
       };
     }
     // ─── локальный режим
@@ -133,10 +137,12 @@ export class AuthService {
       id: genId('user'),
       email: email.trim(),
       name: name.trim() || email.split('@')[0],
+      role: 'admin',
       passwordHash,
       passwordSalt: salt,
       createdAt: new Date().toISOString(),
       accountIds: [],
+      clientAccountIds: [],
     };
     users.push(user);
     this.saveUsers(users);
@@ -152,10 +158,12 @@ export class AuthService {
         id: u.id,
         email: u.email ?? email,
         name: (u.user_metadata?.name as string) ?? (u.email?.split('@')[0] ?? 'Пользователь'),
+        role: (u.user_metadata?.role as User['role']) ?? 'admin',
         passwordHash: '',
         passwordSalt: '',
         createdAt: u.created_at ?? new Date().toISOString(),
         accountIds: [],
+        clientAccountIds: (u.user_metadata?.client_account_ids as string[] | undefined) ?? [],
       };
     }
     const users = this.loadUsers();

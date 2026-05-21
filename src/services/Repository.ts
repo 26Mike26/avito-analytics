@@ -40,7 +40,7 @@ export interface IRepository {
   saveAccountDailySpend(accountId: string, rows: AccountDailySpend[]): Promise<void>;
 
   saveActionLog(entry: ActionLogEntry): Promise<void>;
-  loadActionLog(userId: string): Promise<ActionLogEntry[]>;
+  loadActionLog(userId: string, accountIds?: string[]): Promise<ActionLogEntry[]>;
   clearActionLog(userId: string): Promise<void>;
 }
 
@@ -58,12 +58,42 @@ class SupabaseRepository implements IRepository {
   }
 
   async loadUserAccounts(userId: string): Promise<AccountData[]> {
-    const { data: accs, error } = await this.sb
+    const { data: ownedAccs, error: ownedError } = await this.sb
       .from('accounts')
       .select('*')
       .eq('owner_id', userId)
       .order('created_at', { ascending: true });
-    if (error) throw error;
+    if (ownedError) throw ownedError;
+
+    const { data: linkedRows, error: linkedError } = await this.sb
+      .from('account_clients')
+      .select('account_id')
+      .eq('client_user_id', userId);
+    if (
+      linkedError &&
+      linkedError.code !== '42P01' &&
+      linkedError.code !== 'PGRST205'
+    ) {
+      throw linkedError;
+    }
+
+    const linkedIds = Array.from(
+      new Set((linkedRows ?? []).map((row) => String(row.account_id)).filter(Boolean))
+    );
+    const ownedIds = new Set((ownedAccs ?? []).map((a) => String(a.id)));
+    const clientOnlyIds = linkedIds.filter((id) => !ownedIds.has(id));
+    let linkedAccs: typeof ownedAccs = [];
+    if (clientOnlyIds.length > 0) {
+      const { data, error } = await this.sb
+        .from('accounts')
+        .select('*')
+        .in('id', clientOnlyIds)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      linkedAccs = data ?? [];
+    }
+
+    const accs = [...(ownedAccs ?? []), ...(linkedAccs ?? [])];
     if (!accs || accs.length === 0) return [];
 
     const accIds = accs.map((a) => a.id);
@@ -427,8 +457,8 @@ class SupabaseRepository implements IRepository {
     if (error) console.warn('[supabase] action_log insert error', error.message);
   }
 
-  async loadActionLog(userId: string): Promise<ActionLogEntry[]> {
-    const { data, error } = await this.sb
+  async loadActionLog(userId: string, accountIds: string[] = []): Promise<ActionLogEntry[]> {
+    const { data: ownRows, error } = await this.sb
       .from('action_log')
       .select('*')
       .eq('user_id', userId)
@@ -436,7 +466,25 @@ class SupabaseRepository implements IRepository {
       .order('created_at', { ascending: false })
       .limit(2000);
     if (error) throw error;
-    return (data ?? []).map((r) => ({
+
+    let linkedRows: typeof ownRows = [];
+    if (accountIds.length > 0) {
+      const { data, error: linkedError } = await this.sb
+        .from('action_log')
+        .select('*')
+        .in('account_id', accountIds)
+        .eq('source', 'avito')
+        .order('created_at', { ascending: false })
+        .limit(2000);
+      if (linkedError) throw linkedError;
+      linkedRows = data ?? [];
+    }
+
+    const rows = Array.from(
+      new Map([...(ownRows ?? []), ...(linkedRows ?? [])].map((row) => [row.id, row])).values()
+    ).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+    return rows.map((r) => ({
       id: r.id,
       userId: r.user_id,
       accountId: r.account_id ?? undefined,
