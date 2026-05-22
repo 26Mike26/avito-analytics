@@ -1,13 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { History } from 'lucide-react';
 import { Layout } from '../../components/Layout';
 import { Badge } from '../../components/Badge';
 import { Empty } from '../../components/Empty';
 import { PeriodPicker } from '../../components/PeriodPicker';
 import { useStore } from '../../store/useStore';
-import { visibleAccountIdsForUser, visibleAccountsForUser } from '../../lib/clientAccess';
-
-type Scope = 'all' | string;
+import { useClientScope } from '../../lib/clientScope';
 
 const typeLabel: Record<string, string> = {
   avito_item_published: 'Публикация',
@@ -38,10 +36,12 @@ export default function ClientActionLog() {
   const actionLog = useStore((s) => s.actionLog);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
-  const [scope, setScope] = useState<Scope>('all');
+  const { scope, setScope, visibleAccounts } = useClientScope(user, accountsMap);
 
-  const accounts = useMemo(() => visibleAccountsForUser(user, accountsMap), [accountsMap, user]);
-  const visibleIds = useMemo(() => new Set(visibleAccountIdsForUser(user, accountsMap)), [accountsMap, user]);
+  const visibleIds = useMemo(
+    () => new Set(visibleAccounts.map((account) => account.id)),
+    [visibleAccounts]
+  );
   const rows = useMemo(
     () =>
       actionLog
@@ -62,22 +62,24 @@ export default function ClientActionLog() {
       subtitle="Краткая история действий в аккаунтах Авито за выбранный период"
     >
       <div className="card p-4 sm:p-5 mb-5">
-        <div className="flex flex-col xl:flex-row xl:items-center gap-3">
-          <div className="flex-1 min-w-0">
+        <div className="space-y-3">
+          <div>
             <div className="text-sm font-semibold text-white">Фильтры журнала</div>
             <div className="text-xs text-ink-400 mt-1">
               В журнал попадают только события аккаунта Авито, без внутренних действий платформы.
             </div>
           </div>
-          <select className="input w-full xl:w-72" value={scope} onChange={(e) => setScope(e.target.value)}>
-            <option value="all">Все доступные аккаунты</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-          <PeriodPicker value={period} onChange={setPeriod} className="xl:justify-end" />
+          <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+            <select className="input w-full xl:w-72 xl:shrink-0" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="all">Все доступные аккаунты</option>
+              {visibleAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+            <PeriodPicker value={period} onChange={setPeriod} className="xl:flex-1 xl:justify-end" />
+          </div>
         </div>
       </div>
 

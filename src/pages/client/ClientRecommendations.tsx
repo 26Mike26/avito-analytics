@@ -5,11 +5,9 @@ import { Badge, PriorityBadge } from '../../components/Badge';
 import { Empty } from '../../components/Empty';
 import { PeriodPicker } from '../../components/PeriodPicker';
 import { useStore } from '../../store/useStore';
-import { visibleAccountsForUser } from '../../lib/clientAccess';
+import { useClientScope } from '../../lib/clientScope';
 import { accountViewForPeriod } from '../../lib/clientAnalytics';
 import type { Recommendation } from '../../types';
-
-type Scope = 'all' | string;
 
 const typeLabel: Record<string, string> = {
   bid: 'Ставка',
@@ -25,14 +23,9 @@ export default function ClientRecommendations() {
   const accountsMap = useStore((s) => s.accounts);
   const period = useStore((s) => s.analyticsPeriod);
   const setPeriod = useStore((s) => s.setAnalyticsPeriod);
-  const [scope, setScope] = useState<Scope>('all');
+  const { scope, setScope, visibleAccounts, scopedAccounts } = useClientScope(user, accountsMap);
   const [priority, setPriority] = useState<'all' | Recommendation['priority']>('all');
 
-  const accounts = useMemo(() => visibleAccountsForUser(user, accountsMap), [accountsMap, user]);
-  const scopedAccounts = useMemo(
-    () => (scope === 'all' ? accounts : accounts.filter((account) => account.id === scope)),
-    [accounts, scope]
-  );
   const rows = useMemo(
     () =>
       scopedAccounts
@@ -57,28 +50,30 @@ export default function ClientRecommendations() {
       subtitle="Read-only список проблем и гипотез по доступным аккаунтам"
     >
       <div className="card p-4 sm:p-5 mb-5">
-        <div className="flex flex-col xl:flex-row xl:items-center gap-3">
-          <div className="flex-1 min-w-0">
+        <div className="space-y-3">
+          <div>
             <div className="text-sm font-semibold text-white">Фильтры рекомендаций</div>
             <div className="text-xs text-ink-400 mt-1">
               Клиент видит рекомендации, но не может применять действия из платформы.
             </div>
           </div>
-          <select className="input w-full xl:w-72" value={scope} onChange={(e) => setScope(e.target.value)}>
-            <option value="all">Все доступные аккаунты</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-          <select className="input w-full xl:w-48" value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)}>
-            <option value="all">Любой приоритет</option>
-            <option value="high">Высокий</option>
-            <option value="medium">Средний</option>
-            <option value="low">Низкий</option>
-          </select>
-          <PeriodPicker value={period} onChange={setPeriod} className="xl:justify-end" />
+          <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+            <select className="input w-full xl:w-72 xl:shrink-0" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="all">Все доступные аккаунты</option>
+              {visibleAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+            <select className="input w-full xl:w-48 xl:shrink-0" value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)}>
+              <option value="all">Любой приоритет</option>
+              <option value="high">Высокий</option>
+              <option value="medium">Средний</option>
+              <option value="low">Низкий</option>
+            </select>
+            <PeriodPicker value={period} onChange={setPeriod} className="xl:flex-1 xl:justify-end" />
+          </div>
         </div>
       </div>
 

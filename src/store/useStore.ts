@@ -26,7 +26,7 @@ import {
   buildRecommendations,
   calculateBidRecommendation,
 } from '../lib/recommendations';
-import { isClientUser } from '../lib/clientAccess';
+import { isClientUser, visibleAccountIdsForUser } from '../lib/clientAccess';
 import { lastNDaysRange } from '../lib/analytics';
 import {
   AvitoAdapter,
@@ -998,13 +998,14 @@ export const useStore = create<Store>((set, get) => {
       const user = get().currentUser;
       if (!user) return [];
       const results: AccountApiSyncResult[] = [];
-      const apiAccountIds = user.accountIds.filter((id) => {
+      const accountIds = visibleAccountIdsForUser(user, get().accounts);
+      const apiAccountIds = accountIds.filter((id) => {
         const acc = get().accounts[id];
         return acc?.integration.mode === 'api';
       });
 
       if (apiAccountIds.length === 0) {
-        return user.accountIds
+        return accountIds
           .map((id) => get().accounts[id])
           .filter(Boolean)
           .map((acc) => ({

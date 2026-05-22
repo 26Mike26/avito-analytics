@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
   LogOut,
@@ -26,11 +26,12 @@ export function Header({
   onMenuClick?: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const reload = useStore((s) => s.reloadFromAdapter);
   const loading = useStore((s) => s.loading);
   const user = useStore((s) => s.currentUser);
   const logout = useStore((s) => s.logout);
-  const clientMode = isClientUser(user);
+  const clientMode = isClientUser(user) || location.pathname.startsWith('/client');
   const recCount = useStore(
     (s) => s.recommendations.filter((r) => r.status === 'new' && r.priority === 'high').length
   );
@@ -139,8 +140,8 @@ export function Header({
         {/* Тема light/dark */}
         <ThemeToggle compact />
 
-        {/* Переключатель аккаунтов — на мобиле компактнее (внутри AccountSwitcher) */}
-        <AccountSwitcher />
+        {/* Переключатель аккаунтов — только в основном режиме */}
+        {!clientMode && <AccountSwitcher />}
 
         {/* Профиль */}
         <div className="relative" ref={menuRef}>

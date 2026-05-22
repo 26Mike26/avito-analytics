@@ -52,7 +52,7 @@ export function Sidebar({
 }) {
   const location = useLocation();
   const user = useStore((s) => s.currentUser);
-  const clientMode = isClientUser(user);
+  const clientMode = isClientUser(user) || location.pathname.startsWith('/client');
   const items = clientMode ? clientItems : platformItems;
 
   return (
@@ -105,7 +105,7 @@ export function Sidebar({
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === '/'}
+              end={item.to === '/' || item.to === '/client'}
               onClick={onClose}
               className={({ isActive }) => {
                 const active =
