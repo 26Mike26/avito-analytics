@@ -150,6 +150,29 @@ export type Session = {
   startedAt: string;
 };
 
+/**
+ * Доступ-ссылка для клиента. Токен открывает клиентский кабинет (`/client`)
+ * в режиме просмотра по выбранным владельцем аккаунтам — без отдельного логина.
+ */
+export type ClientShare = {
+  id: string;
+  /** Секретный токен из ссылки. Должен быть длинным и случайным. */
+  token: string;
+  /** Пользователь-владелец, который выдал доступ. */
+  ownerUserId: string;
+  /** Человекочитаемое название доступа (имя клиента/компании). */
+  label: string;
+  /** Аккаунты владельца, видимые по этому доступу. */
+  accountIds: string[];
+  createdAt: string;
+  /** ISO-дата окончания действия или null — бессрочно. */
+  expiresAt: string | null;
+  /** ISO-дата отзыва или null — доступ активен. */
+  revokedAt: string | null;
+};
+
+export type ClientShareStatus = 'active' | 'revoked' | 'expired';
+
 export type AccountPeriodCacheEntry = {
   from: string;
   to: string;

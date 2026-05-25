@@ -8,12 +8,14 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  Users,
   Wifi,
 } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { Badge } from '../components/Badge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PeriodPicker } from '../components/PeriodPicker';
+import { ClientsPanel } from '../components/ClientsPanel';
 import { useStore, type AccountApiSyncResult } from '../store/useStore';
 import type { AccountData } from '../types';
 import {
@@ -75,6 +77,7 @@ export default function Accounts() {
   const [cacheLoading, setCacheLoading] = useState(false);
   const [syncResults, setSyncResults] = useState<AccountApiSyncResult[]>([]);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'accounts' | 'clients'>('accounts');
 
   const userAccounts = useMemo(
     () =>
@@ -192,6 +195,39 @@ export default function Accounts() {
       title="Аккаунты"
       subtitle="Список рекламных аккаунтов, привязанных к вашему профилю"
     >
+      <div className="flex items-center gap-1 mb-6 border-b border-ink-700/70">
+        <button
+          type="button"
+          onClick={() => setTab('accounts')}
+          className={[
+            'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+            tab === 'accounts'
+              ? 'border-accent text-white'
+              : 'border-transparent text-ink-400 hover:text-white',
+          ].join(' ')}
+        >
+          Аккаунты
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('clients')}
+          className={[
+            'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
+            tab === 'clients'
+              ? 'border-accent text-white'
+              : 'border-transparent text-ink-400 hover:text-white',
+          ].join(' ')}
+        >
+          <Users className="w-4 h-4" /> Клиенты
+        </button>
+      </div>
+
+      {tab === 'clients' && (
+        <ClientsPanel ownerUserId={user.id} accounts={userAccounts} />
+      )}
+
+      {tab === 'accounts' && (
+      <>
       <div className="card p-4 sm:p-5 mb-6">
         <div className="flex flex-col lg:flex-row lg:items-center gap-4">
           <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -466,6 +502,8 @@ export default function Accounts() {
           setPendingDeleteId(null);
         }}
       />
+      </>
+      )}
     </Layout>
   );
 }

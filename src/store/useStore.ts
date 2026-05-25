@@ -42,6 +42,14 @@ import {
   itemDailyStatsFromMetrics,
 } from '../services/StatsCacheService';
 import { SUPABASE_ENABLED } from '../services/supabase';
+import {
+  clearClientToken,
+  loadClientToken,
+  loadSharedAccounts,
+  readClientTokenFromUrl,
+  resolveClientShareToken,
+  saveClientToken,
+} from '../services/ClientShareService';
 
 const ACCOUNTS_KEY = 'avito-app-accounts';
 const ACTIVE_KEY = 'avito-app-active-account';
@@ -680,13 +688,83 @@ export const useStore = create<Store>((set, get) => {
         return;
       }
 
+      // ─── Вход клиента по токен-ссылке ───
+      // Резолвит доступ-токен, собирает синтетическую клиентскую сессию
+      // (без логина) и наполняет стор аккаунтами доступа. Возвращает true,
+      // если токен валиден и сессия установлена.
+      const applyClientToken = async (token: string): Promise<boolean> => {
+        let share;
+        try {
+          share = await resolveClientShareToken(token);
+        } catch {
+          share = null;
+        }
+        if (!share) {
+          clearClientToken();
+          return false;
+        }
+        let sharedAccounts: AccountData[];
+        if (SUPABASE_ENABLED) {
+          const remote = await loadSharedAccounts(token).catch(() => null);
+          sharedAccounts = remote ?? [];
+        } else {
+          const all = loadAccounts();
+          sharedAccounts = share.accountIds
+            .map((id) => all[id])
+            .filter(Boolean) as AccountData[];
+        }
+        if (sharedAccounts.length === 0) return false;
+        const accs: Record<string, AccountData> = {};
+        for (const a of sharedAccounts) accs[a.id] = a;
+        const accountIds = sharedAccounts.map((a) => a.id);
+        const activeId = accountIds[0] ?? null;
+        const acc = activeId ? accs[activeId] : null;
+        saveClientToken(token);
+        const clientUser: User = {
+          id: `share:${share.id}`,
+          email: '',
+          name: share.label,
+          role: 'client',
+          passwordHash: '',
+          passwordSalt: '',
+          createdAt: share.createdAt,
+          accountIds,
+          clientAccountIds: accountIds,
+        };
+        set({
+          session: {
+            userId: clientUser.id,
+            startedAt: new Date().toISOString(),
+          },
+          currentUser: clientUser,
+          accounts: accs,
+          currentAccountId: activeId,
+          actionLog: [],
+          ...(acc ? buildMirrorForPeriod(acc, get().analyticsPeriod) : {}),
+          initialized: true,
+        });
+        if (acc) adapter.setSettings(acc.integration);
+        return true;
+      };
+
+      // Токен в URL (?ct=...) имеет приоритет над обычной авторизацией.
+      const urlToken = readClientTokenFromUrl();
+      if (urlToken && (await applyClientToken(urlToken))) {
+        return;
+      }
+
       // ─── Supabase режим ───
       if (SUPABASE_ENABLED) {
         const user = await authService.getCurrentUser();
         if (!user) {
+          const storedToken = loadClientToken();
+          if (storedToken && (await applyClientToken(storedToken))) {
+            return;
+          }
           set({ session: null, currentUser: null });
           return;
         }
+        clearClientToken();
         const session: Session = { userId: user.id, startedAt: new Date().toISOString() };
         const remoteAccounts = await repository.loadUserAccounts(user.id);
         let accs: Record<string, AccountData> = {};
@@ -760,9 +838,14 @@ export const useStore = create<Store>((set, get) => {
       // ─── Локальный режим (как было) ───
       const session = authService.loadSession();
       if (!session) {
+        const storedToken = loadClientToken();
+        if (storedToken && (await applyClientToken(storedToken))) {
+          return;
+        }
         set({ session: null, currentUser: null });
         return;
       }
+      clearClientToken();
       const users = authService.loadUsers();
       const user = users.find((u) => u.id === session.userId) ?? null;
       if (!user) {
@@ -877,6 +960,7 @@ export const useStore = create<Store>((set, get) => {
       const email = get().currentUser?.email ?? '';
       get().log('logout', 'Выход из системы', email);
       void authService.logout();
+      clearClientToken();
       set({
         session: null,
         currentUser: null,

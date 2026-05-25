@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import KpiCenter from './pages/KpiCenter';
 import Items from './pages/Items';
@@ -19,11 +19,23 @@ import ClientRecommendations from './pages/client/ClientRecommendations';
 import ClientActionLog from './pages/client/ClientActionLog';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
+/**
+ * Короткая ссылка для клиента: /c/<token> → /client?ct=<token>.
+ * Сам токен резолвится в useStore.bootstrap().
+ */
+function ClientShareEntry() {
+  const { token } = useParams<{ token: string }>();
+  return (
+    <Navigate to={`/client?ct=${encodeURIComponent(token ?? '')}`} replace />
+  );
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/c/:token" element={<ClientShareEntry />} />
       <Route
         path="/client"
         element={

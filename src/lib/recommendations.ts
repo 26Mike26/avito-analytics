@@ -12,6 +12,7 @@ import {
   classifyItem,
   formatPercent,
   formatRub,
+  subcategoryName,
 } from './analytics';
 
 const MAX_BID_INCREASE_PERCENT = 25;
@@ -118,10 +119,11 @@ function categoryWinners(
   for (const it of items) {
     if (it.status !== 'active') continue;
     const cpl = calcCpl(it.spend, it.contacts);
-    const g = groups.get(it.category) ?? { items: [], cpls: [] };
+    const key = subcategoryName(it.category);
+    const g = groups.get(key) ?? { items: [], cpls: [] };
     g.items.push(it);
     if (cpl != null) g.cpls.push(cpl);
-    groups.set(it.category, g);
+    groups.set(key, g);
   }
   const out: Array<{ category: string; winners: number; medianCpl: number | null }> = [];
   for (const [cat, g] of groups.entries()) {
@@ -164,10 +166,11 @@ function computeCategoryStats(items: AvitoItem[]): Map<string, CategoryStats> {
   for (const it of items) {
     const cpl = calcCpl(it.spend, it.contacts);
     const cr = calcConversion(it.views, it.contacts);
-    const g = groups.get(it.category) ?? { cpls: [], convs: [] };
+    const key = subcategoryName(it.category);
+    const g = groups.get(key) ?? { cpls: [], convs: [] };
     if (cpl != null) g.cpls.push(cpl);
     if (cr != null) g.convs.push(cr);
-    groups.set(it.category, g);
+    groups.set(key, g);
   }
   const out = new Map<string, CategoryStats>();
   for (const [cat, v] of groups.entries()) {
@@ -224,7 +227,7 @@ export function calculateBidRecommendation(
   const cr = calcConversion(item.views, item.contacts);
   const dataIsThin = item.views < 200 && item.spend < 1500;
   const trend = calcTrend(metrics, item.id);
-  const catStat = categoryStats?.get(item.category);
+  const catStat = categoryStats?.get(subcategoryName(item.category));
 
   let diff = 0;
   let priority: RecommendationPriority = 'low';
@@ -253,7 +256,7 @@ export function calculateBidRecommendation(
     );
     if (catStat?.medianCpl && cpl > catStat.medianCpl * 1.2) {
       reasons.push(
-        `и выше медианы по «${item.category}» (${formatRub(catStat.medianCpl)})`
+        `и выше медианы по «${subcategoryName(item.category)}» (${formatRub(catStat.medianCpl)})`
       );
     }
     if (trend === 'down') reasons.push('к тому же контакты падают неделя к неделе');
@@ -269,7 +272,7 @@ export function calculateBidRecommendation(
     );
     if (catStat?.medianConversion && cr < catStat.medianConversion * 0.7) {
       reasons.push(
-        `это ниже медианы «${item.category}» (${formatPercent(catStat.medianConversion)})`
+        `это ниже медианы «${subcategoryName(item.category)}» (${formatPercent(catStat.medianConversion)})`
       );
     }
     reasons.push('повышать ставку нет смысла — нужно поправить контент');

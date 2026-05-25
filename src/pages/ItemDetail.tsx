@@ -31,6 +31,7 @@ import {
   formatNumber,
   formatPercent,
   formatRub,
+  subcategoryName,
 } from '../lib/analytics';
 import { calculateBidRecommendation } from '../lib/recommendations';
 import { Empty } from '../components/Empty';
@@ -100,7 +101,7 @@ export default function ItemDetail() {
 
   const cpl = calcCpl(item.spend, item.contacts);
   const cr = calcConversion(item.views, item.contacts);
-  const catAvg = categoryStats.get(item.category);
+  const catAvg = categoryStats.get(subcategoryName(item.category));
   const bidRec = calculateBidRecommendation(item, kpi, metrics);
   const itemHistory = bidHistory.filter((h) => h.itemId === item.id);
 
@@ -258,7 +259,7 @@ export default function ItemDetail() {
             tone="blue"
             description={
               cr != null && catAvg?.conversion != null && cr < catAvg.conversion
-                ? `Конверсия ${formatPercent(cr)} ниже средней по категории «${item.category}» (${formatPercent(
+                ? `Конверсия ${formatPercent(cr)} ниже средней по категории «${subcategoryName(item.category)}» (${formatPercent(
                     catAvg.conversion
                   )}). Обновите фото, заголовок и первые строки описания.`
                 : 'Контент в норме относительно категории. Можно продолжать без правок.'
