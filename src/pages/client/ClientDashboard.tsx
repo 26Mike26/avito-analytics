@@ -41,6 +41,8 @@ export default function ClientDashboard() {
   const loading = useStore((s) => s.loading);
   const syncAllApiAccounts = useStore((s) => s.syncAllApiAccounts);
   const hydratePeriodCacheForAccounts = useStore((s) => s.hydratePeriodCacheForAccounts);
+  const clientShareToken = useStore((s) => s.clientShareToken);
+  const refreshClientSharePeriod = useStore((s) => s.refreshClientSharePeriod);
   const { scope, setScope, visibleAccounts, scopedAccounts } = useClientScope(user, accountsMap);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
 
@@ -72,6 +74,13 @@ export default function ClientDashboard() {
   const refreshPeriod = async () => {
     if (visibleAccounts.length === 0) return;
     setRefreshNote(null);
+    // Клиент по share-ссылке — read-only: API не синхронизируем, тянем
+    // точную статистику за период через RPC.
+    if (clientShareToken) {
+      await refreshClientSharePeriod(period);
+      setRefreshNote('Данные за период обновлены.');
+      return;
+    }
     const ids = visibleAccounts.map((account) => account.id);
     const results = await syncAllApiAccounts();
     await hydratePeriodCacheForAccounts(period, ids);

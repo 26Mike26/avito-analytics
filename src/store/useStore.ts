@@ -46,6 +46,7 @@ import {
   clearClientToken,
   loadClientToken,
   loadSharedAccounts,
+  loadSharedPeriod,
   readClientTokenFromUrl,
   resolveClientShareToken,
   saveClientToken,
@@ -338,6 +339,8 @@ type Store = {
   // Сессия и пользователи
   session: Session | null;
   currentUser: User | null;
+  /** Токен клиентского доступа, если вход выполнен по share-ссылке. */
+  clientShareToken: string | null;
 
   // Аккаунты
   accounts: Record<string, AccountData>;
@@ -388,6 +391,12 @@ type Store = {
     period?: ReportPeriod,
     accountIds?: string[]
   ) => Promise<void>;
+  /**
+   * Подтягивает точную статистику за период для клиента, вошедшего по
+   * share-ссылке (через RPC, без авторизации). Аналог
+   * hydratePeriodCacheForAccounts, но источник данных — client_share_period.
+   */
+  refreshClientSharePeriod: (period?: ReportPeriod) => Promise<void>;
 
   // ───── KPI / данные / рекомендации (текущий аккаунт)
   init: () => Promise<void>;
@@ -632,6 +641,7 @@ export const useStore = create<Store>((set, get) => {
   return {
     session: null,
     currentUser: null,
+    clientShareToken: null,
     accounts: persistedAccounts,
     currentAccountId: persistedActive,
     actionLog: persistedLog,
@@ -659,6 +669,11 @@ export const useStore = create<Store>((set, get) => {
         analyticsPeriod: period,
         ...(acc ? buildMirrorForPeriod(acc, period) : {}),
       });
+      // Клиент по share-ссылке: точные данные за период берём через RPC.
+      if (get().clientShareToken) {
+        void get().refreshClientSharePeriod(period);
+        return;
+      }
       if (!id || !acc || !SUPABASE_ENABLED) return;
       void (async () => {
         try {
@@ -737,6 +752,7 @@ export const useStore = create<Store>((set, get) => {
             startedAt: new Date().toISOString(),
           },
           currentUser: clientUser,
+          clientShareToken: token,
           accounts: accs,
           currentAccountId: activeId,
           actionLog: [],
@@ -744,6 +760,8 @@ export const useStore = create<Store>((set, get) => {
           initialized: true,
         });
         if (acc) adapter.setSettings(acc.integration);
+        // Точная статистика за текущий период — через RPC client_share_period.
+        await get().refreshClientSharePeriod(get().analyticsPeriod);
         return true;
       };
 
@@ -964,6 +982,7 @@ export const useStore = create<Store>((set, get) => {
       set({
         session: null,
         currentUser: null,
+        clientShareToken: null,
         currentAccountId: null,
         initialized: false,
         items: [],
@@ -1299,6 +1318,56 @@ export const useStore = create<Store>((set, get) => {
         accounts: nextAccs,
         ...(active ? buildMirrorForPeriod(active, get().analyticsPeriod) : {}),
       });
+    },
+
+    refreshClientSharePeriod: async (periodArg) => {
+      const token = get().clientShareToken;
+      if (!token || !SUPABASE_ENABLED) return;
+      const period = periodArg ?? get().analyticsPeriod;
+      set({ loading: true });
+      try {
+        const rows = await loadSharedPeriod(token, period.from, period.to);
+        if (!rows || rows.length === 0) return;
+        const nextAccs = { ...get().accounts };
+        let changed = false;
+        for (const row of rows) {
+          const acc = nextAccs[row.accountId];
+          if (!acc) continue;
+          const cached = buildCachedPeriodData(
+            acc,
+            row.itemDailyStats ?? [],
+            row.accountDailySpend ?? [],
+            period
+          );
+          if (!cached || cached.metrics.length === 0) continue;
+          const itemsWithRec = applyBidRecommendationsToItems(
+            cached.items,
+            acc.kpi,
+            cached.metrics
+          );
+          const recs = buildRecommendations(itemsWithRec, acc.kpi, cached.metrics);
+          nextAccs[row.accountId] = withPeriodSnapshotData(acc, period, {
+            items: itemsWithRec,
+            metrics: cached.metrics,
+            recommendations: recs,
+            accountCharges: acc.accountCharges ?? [],
+            hasPerItemSpend: cached.hasPerItemSpend,
+            spendings: cached.spendings,
+          });
+          changed = true;
+        }
+        if (!changed) return;
+        const activeId = get().currentAccountId;
+        const active = activeId ? nextAccs[activeId] : null;
+        set({
+          accounts: nextAccs,
+          ...(active ? buildMirrorForPeriod(active, get().analyticsPeriod) : {}),
+        });
+      } catch (e) {
+        console.warn('[client-share] refreshClientSharePeriod:', e);
+      } finally {
+        set({ loading: false });
+      }
     },
 
     init: async () => {

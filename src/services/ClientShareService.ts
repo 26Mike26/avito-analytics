@@ -1,4 +1,10 @@
-import type { AccountData, ClientShare, ClientShareStatus } from '../types';
+import type {
+  AccountData,
+  AccountDailySpend,
+  ClientShare,
+  ClientShareStatus,
+  ItemDailyStat,
+} from '../types';
 import { SUPABASE_ENABLED, supabase } from './supabase';
 
 /**
@@ -301,6 +307,36 @@ export async function loadSharedAccounts(
     if (error) throw error;
     if (!data) return [];
     return data as AccountData[];
+  }
+  return null;
+}
+
+/** Точная дневная статистика за период по аккаунтам доступа. */
+export type SharedPeriodAccount = {
+  accountId: string;
+  itemDailyStats: ItemDailyStat[];
+  accountDailySpend: AccountDailySpend[];
+};
+
+/**
+ * Загружает точную статистику (item_daily_stats + account_daily_spend) за
+ * период для аккаунтов доступа (только Supabase-режим). Используется, чтобы
+ * затраты в клиентском кабинете совпадали с данными владельца.
+ */
+export async function loadSharedPeriod(
+  token: string,
+  from: string,
+  to: string
+): Promise<SharedPeriodAccount[] | null> {
+  if (SUPABASE_ENABLED && supabase) {
+    const { data, error } = await supabase.rpc('client_share_period', {
+      p_token: token,
+      p_from: from,
+      p_to: to,
+    });
+    if (error) throw error;
+    if (!data) return [];
+    return data as SharedPeriodAccount[];
   }
   return null;
 }

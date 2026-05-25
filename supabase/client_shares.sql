@@ -148,6 +148,86 @@ revoke all on function public.client_share_accounts(text) from public;
 grant execute on function public.resolve_client_share(text) to anon, authenticated;
 grant execute on function public.client_share_accounts(text) to anon, authenticated;
 
+-- ──────────── ФУНКЦИЯ: ТОЧНАЯ СТАТИСТИКА ЗА ПЕРИОД ───────────
+-- Возвращает item_daily_stats + account_daily_spend за период по аккаунтам
+-- доступа. Нужна, чтобы затраты в кабинете клиента совпадали с владельцем.
+
+create or replace function public.client_share_period(
+  p_token text,
+  p_from date,
+  p_to date
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_share public.client_shares;
+  v_result jsonb;
+begin
+  select * into v_share
+  from public.client_shares cs
+  where cs.token = p_token
+    and cs.revoked_at is null
+    and (cs.expires_at is null or cs.expires_at > now());
+
+  if not found then
+    return null;
+  end if;
+
+  select coalesce(jsonb_agg(acc.payload), '[]'::jsonb)
+  into v_result
+  from (
+    select jsonb_build_object(
+      'accountId', a.id,
+      'itemDailyStats', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'accountId', s.account_id,
+          'itemId', s.item_id,
+          'date', s.date,
+          'views', s.views,
+          'impressions', s.impressions,
+          'contacts', s.contacts,
+          'favorites', s.favorites,
+          'spend', s.spend,
+          'bid', s.bid,
+          'accuracy', s.accuracy
+        ))
+        from public.item_daily_stats s
+        where s.account_id = a.id
+          and s.date >= p_from and s.date <= p_to
+      ), '[]'::jsonb),
+      'accountDailySpend', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'accountId', d.account_id,
+          'date', d.date,
+          'promotion', d.promotion,
+          'presence', d.presence,
+          'commission', d.commission,
+          'rest', d.rest,
+          'ads', d.ads,
+          'total', d.total,
+          'accuracy', d.accuracy
+        ))
+        from public.account_daily_spend d
+        where d.account_id = a.id
+          and d.date >= p_from and d.date <= p_to
+      ), '[]'::jsonb)
+    ) as payload
+    from public.accounts a
+    where a.id = any (v_share.account_ids)
+  ) acc;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function public.client_share_period(text, date, date) from public;
+grant execute on function public.client_share_period(text, date, date) to anon, authenticated;
+
 -- ─────────────────────────── ПОДСКАЗКА ───────────────────────
 -- Проверка резолва:  select public.resolve_client_share('<token>');
 -- Проверка данных:   select public.client_share_accounts('<token>');
+-- Проверка периода:  select public.client_share_period('<token>','2026-05-01','2026-05-31');
