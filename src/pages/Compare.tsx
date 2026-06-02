@@ -21,7 +21,14 @@ import {
   type ItemDiff,
   type PeriodComparison,
 } from '../lib/compare';
-import { calcCpl, formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
+import {
+  calcConversion,
+  calcCpl,
+  formatNumber,
+  formatPercent,
+  formatRub,
+  itemsInDateRange,
+} from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
 import type { AvitoItem, ItemMetrics } from '../types';
 import type { SpendingsBreakdown } from '../services/AvitoAdapter';
@@ -780,6 +787,7 @@ function ComparisonView({
                 <th className="table-th text-right">Контакты A → Б</th>
                 <th className="table-th text-right">Расход A → Б</th>
                 <th className="table-th text-right">CPL A → Б</th>
+                <th className="table-th text-right">CR A → Б</th>
                 <th className="table-th text-right">Δ контактов</th>
                 <th className="table-th text-right">Δ CPL %</th>
               </tr>
@@ -802,6 +810,15 @@ function ComparisonView({
                   <td className="table-td text-right whitespace-nowrap">
                     {d.a.cpl != null ? formatRub(d.a.cpl) : '—'} →{' '}
                     {d.b.cpl != null ? formatRub(d.b.cpl) : '—'}
+                  </td>
+                  <td className="table-td text-right whitespace-nowrap">
+                    {(() => {
+                      const crA = calcConversion(d.a.views, d.a.contacts);
+                      const crB = calcConversion(d.b.views, d.b.contacts);
+                      return `${crA != null ? formatPercent(crA) : '—'} → ${
+                        crB != null ? formatPercent(crB) : '—'
+                      }`;
+                    })()}
                   </td>
                   <td className="table-td text-right">
                     <DeltaPill value={d.deltaContacts} higherIsBetter />
@@ -867,6 +884,7 @@ function CityComparison({
                   <th className="table-th text-right">Контакты A → Б</th>
                   <th className="table-th text-right">Расход A → Б</th>
                   <th className="table-th text-right">CPL A → Б</th>
+                  <th className="table-th text-right">CR A → Б</th>
                   <th className="table-th text-right">Δ контактов</th>
                   <th className="table-th text-right">Δ CPL %</th>
                 </tr>
@@ -892,6 +910,15 @@ function CityComparison({
                     <td className="table-td text-right whitespace-nowrap">
                       {d.a.cpl != null ? formatRub(d.a.cpl) : '—'} →{' '}
                       {d.b.cpl != null ? formatRub(d.b.cpl) : '—'}
+                    </td>
+                    <td className="table-td text-right whitespace-nowrap">
+                      {(() => {
+                        const crA = calcConversion(d.a.views, d.a.contacts);
+                        const crB = calcConversion(d.b.views, d.b.contacts);
+                        return `${crA != null ? formatPercent(crA) : '—'} → ${
+                          crB != null ? formatPercent(crB) : '—'
+                        }`;
+                      })()}
                     </td>
                     <td className="table-td text-right">
                       <DeltaPill value={d.deltaContacts} higherIsBetter />
