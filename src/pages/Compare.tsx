@@ -713,6 +713,17 @@ function ComparisonView({
         />
       </div>
 
+      {/* Заметка про задержку биллинга Avito: есть активность, но расход = 0 */}
+      {((c.a.spend === 0 && (c.a.views > 0 || c.a.contacts > 0)) ||
+        (c.b.spend === 0 && (c.b.views > 0 || c.b.contacts > 0))) && (
+        <div className="card p-3 sm:p-4 mb-6 border border-amber-500/30 bg-amber-500/5 text-xs text-amber-200/90">
+          В одном из периодов есть просмотры и контакты, но расход = 0. Avito
+          обновляет данные о списаниях с задержкой 1–3 дня, поэтому за самые свежие
+          дни расход и CPL могут быть пустыми. Когда суммы появятся в Avito, нажмите
+          «Уточнить расходы» — они подтянутся точно.
+        </div>
+      )}
+
       {/* Подзаголовок периодов */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
         <div className="card p-4">
