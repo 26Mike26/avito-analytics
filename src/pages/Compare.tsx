@@ -36,6 +36,7 @@ type PreciseProgress = {
   nextEta?: number;
   label?: string;
   error?: string;
+  kind?: 'city' | 'item';
 };
 
 export default function Compare() {
@@ -180,43 +181,48 @@ export default function Compare() {
     setPreciseProgress({ busy: false, done: 0, total: 0 });
   }, [mode, dateA.from, dateA.to, dateB.from, dateB.to]);
 
-  const runPreciseExpenses = async () => {
+  /**
+   * Уточняет точный расход через Avito API по одному виду строк:
+   * `kind === 'city'` — по всем городам, `kind === 'item'` — по всем объявлениям.
+   * Срезов нет: уточняются все ещё не уточнённые строки (сортировка по расходу,
+   * чтобы крупные суммы появились первыми). Лимит Avito ~1 запрос/мин.
+   */
+  const runPrecise = async (kind: 'city' | 'item') => {
     if (mode !== 'date' || !baseComparison || !datePeriodItems || preciseProgress.busy) return;
 
     const allPeriodItems = [...datePeriodItems.a, ...datePeriodItems.b];
-    const cityTargets = [...baseComparison.cities]
-      .filter((c) => !preciseCities.has(c.region))
-      .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
-      .slice(0, 5);
-    const itemTargets = [...baseComparison.items]
-      .filter((i) => !preciseItems.has(i.itemId))
-      .filter((i) => numericItemId(i.itemId) != null)
-      .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
-      .slice(0, 10);
-
     const targets: Array<{
       type: 'city' | 'item';
       key: string;
       label: string;
       itemIds: number[];
-    }> = [
-      ...cityTargets.map((city) => ({
-        type: 'city' as const,
-        key: city.region,
-        label: `город ${city.region}`,
-        itemIds: uniqueNumbers(
-          allPeriodItems
-            .filter((it) => cleanRegionName(it.region) === city.region)
-            .map((it) => numericItemId(it.id))
-        ),
-      })),
-      ...itemTargets.map((item) => ({
-        type: 'item' as const,
-        key: item.itemId,
-        label: item.title,
-        itemIds: uniqueNumbers([numericItemId(item.itemId)]),
-      })),
-    ].filter((t) => t.itemIds.length > 0);
+    }> =
+      kind === 'city'
+        ? [...baseComparison.cities]
+            .filter((c) => !preciseCities.has(c.region))
+            .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
+            .map((city) => ({
+              type: 'city' as const,
+              key: city.region,
+              label: `город ${city.region}`,
+              itemIds: uniqueNumbers(
+                allPeriodItems
+                  .filter((it) => cleanRegionName(it.region) === city.region)
+                  .map((it) => numericItemId(it.id))
+              ),
+            }))
+            .filter((t) => t.itemIds.length > 0)
+        : [...baseComparison.items]
+            .filter((i) => !preciseItems.has(i.itemId))
+            .filter((i) => numericItemId(i.itemId) != null)
+            .sort((a, b) => Math.max(b.a.spend, b.b.spend) - Math.max(a.a.spend, a.b.spend))
+            .map((item) => ({
+              type: 'item' as const,
+              key: item.itemId,
+              label: item.title,
+              itemIds: uniqueNumbers([numericItemId(item.itemId)]),
+            }))
+            .filter((t) => t.itemIds.length > 0);
 
     if (targets.length === 0) return;
 
@@ -224,7 +230,7 @@ export default function Compare() {
     preciseRunId.current = runId;
     const dateFrom = minDate(dateA.from, dateB.from);
     const dateTo = maxDate(dateA.to, dateB.to);
-    setPreciseProgress({ busy: true, done: 0, total: targets.length, label: targets[0].label });
+    setPreciseProgress({ busy: true, done: 0, total: targets.length, label: targets[0].label, kind });
 
     const cityMap = new Map(preciseCities);
     const itemMap = new Map(preciseItems);
@@ -267,6 +273,7 @@ export default function Compare() {
         busy: true,
         done: i + 1,
         total: targets.length,
+        kind,
         error: failed > 0 ? `Не удалось уточнить ${failed} из ${targets.length}; остальные запросы продолжаются.` : undefined,
       });
       if (i < targets.length - 1) {
@@ -281,6 +288,7 @@ export default function Compare() {
       busy: false,
       done: targets.length,
       total: targets.length,
+      kind,
       error:
         failed === 0
           ? undefined
@@ -382,15 +390,16 @@ export default function Compare() {
       ) : (
         <ComparisonView
           c={comparison}
-          preciseControl={
-            mode === 'date' ? (
-              <PreciseCompareBar
-                cityCount={preciseCities.size}
-                itemCount={preciseItems.size}
-                progress={preciseProgress}
-                onRun={runPreciseExpenses}
-              />
-            ) : null
+          precise={
+            mode === 'date'
+              ? {
+                  progress: preciseProgress,
+                  cityCount: preciseCities.size,
+                  itemCount: preciseItems.size,
+                  onRefineCities: () => runPrecise('city'),
+                  onRefineItems: () => runPrecise('item'),
+                }
+              : undefined
           }
         />
       )}
@@ -558,12 +567,20 @@ function CsvSlot({
   );
 }
 
+type PreciseControl = {
+  progress: PreciseProgress;
+  cityCount: number;
+  itemCount: number;
+  onRefineCities: () => void;
+  onRefineItems: () => void;
+};
+
 function ComparisonView({
   c,
-  preciseControl,
+  precise,
 }: {
   c: PeriodComparison;
-  preciseControl?: React.ReactNode;
+  precise?: PreciseControl;
 }) {
   return (
     <>
@@ -634,15 +651,32 @@ function ComparisonView({
         </div>
       </div>
 
-      {preciseControl}
-
-      <CityComparison cities={c.cities} />
+      <CityComparison
+        cities={c.cities}
+        refine={
+          precise
+            ? {
+                count: precise.cityCount,
+                progress: precise.progress,
+                onRun: precise.onRefineCities,
+              }
+            : undefined
+        }
+      />
 
       {/* Топ-движение по объявлениям */}
       <div className="card p-4 sm:p-5">
         <h2 className="text-lg font-bold text-white mb-3">
           Изменения по объявлениям
         </h2>
+        {precise && (
+          <PreciseButton
+            kind="item"
+            count={precise.itemCount}
+            progress={precise.progress}
+            onRun={precise.onRefineItems}
+          />
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -703,12 +737,26 @@ function ComparisonView({
   );
 }
 
-function CityComparison({ cities }: { cities: CityDiff[] }) {
+function CityComparison({
+  cities,
+  refine,
+}: {
+  cities: CityDiff[];
+  refine?: { count: number; progress: PreciseProgress; onRun: () => void };
+}) {
   return (
     <div className="card p-4 sm:p-5 mb-6">
       <h2 className="text-lg font-bold text-white mb-3">
         Сравнение по городам
       </h2>
+      {refine && (
+        <PreciseButton
+          kind="city"
+          count={refine.count}
+          progress={refine.progress}
+          onRun={refine.onRun}
+        />
+      )}
       {cities.length === 0 ? (
         <div className="text-sm text-ink-400">
           За выбранные периоды нет городов с активностью.
@@ -780,14 +828,14 @@ function CityComparison({ cities }: { cities: CityDiff[] }) {
   );
 }
 
-function PreciseCompareBar({
-  cityCount,
-  itemCount,
+function PreciseButton({
+  kind,
+  count,
   progress,
   onRun,
 }: {
-  cityCount: number;
-  itemCount: number;
+  kind: 'city' | 'item';
+  count: number;
   progress: PreciseProgress;
   onRun: () => void;
 }) {
@@ -798,46 +846,43 @@ function PreciseCompareBar({
     return () => clearInterval(id);
   }, [progress.busy]);
 
-  const secLeft = progress.nextEta
-    ? Math.max(0, Math.round((progress.nextEta - now) / 1000))
-    : 0;
-  const hasPrecise = cityCount > 0 || itemCount > 0;
+  // Прогресс показываем только у той кнопки, чей вид сейчас уточняется.
+  const isThis = progress.kind === kind;
+  const isBusyHere = progress.busy && isThis;
+  const secLeft =
+    isBusyHere && progress.nextEta
+      ? Math.max(0, Math.round((progress.nextEta - now) / 1000))
+      : 0;
+  const donePlural = kind === 'city' ? 'городов' : 'объявлений';
 
   return (
-    <div className="card p-4 sm:p-5 mb-6 border-accent/30 bg-accent/5">
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={onRun}
-          disabled={progress.busy}
-          className="btn-secondary disabled:opacity-50"
-          title="Точный расход через Avito API: /stats/v2/spendings с filter.itemIds. Ограничение Avito — примерно 1 запрос в минуту."
-        >
-          {progress.busy ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Wand2 className="w-4 h-4" />
-          )}
-          {progress.busy
-            ? `Уточняю ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ''}`
-            : hasPrecise
-            ? 'Уточнить ещё'
-            : 'Уточнить расходы'}
-        </button>
-        <div className="text-sm text-ink-300">
-          {progress.error
-            ? progress.error
-            : progress.busy
-            ? `Сейчас: ${progress.label ?? 'запрос к Avito'}`
-            : hasPrecise
-            ? `Точно: городов ${cityCount}, объявлений ${itemCount}.`
-            : 'Текущие расходы по городам и объявлениям могут быть распределением. Кнопка подтянет точные суммы из Avito.'}
-        </div>
-      </div>
-      <div className="text-xs text-ink-400 mt-2">
-        За один запуск уточняются топ-5 городов и топ-10 объявлений по расходу.
-        Из-за лимита Avito процесс идёт последовательно; новые точные значения
-        появляются в таблицах сразу после каждого запроса.
-      </div>
+    <div className="flex flex-wrap items-center gap-2 mb-3">
+      <button
+        onClick={onRun}
+        disabled={progress.busy}
+        className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
+        title="Точный расход через Avito API: /stats/v2/spendings с filter.itemIds. Ограничение Avito — примерно 1 запрос в минуту, строки уточняются последовательно."
+      >
+        {isBusyHere ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Wand2 className="w-3.5 h-3.5" />
+        )}
+        {isBusyHere
+          ? `Уточняю ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ''}`
+          : count > 0
+          ? `Уточнить ещё (точных: ${count})`
+          : 'Уточнить расходы'}
+      </button>
+      <span className="text-xs text-ink-400">
+        {isBusyHere
+          ? `Сейчас: ${progress.label ?? 'запрос к Avito'}`
+          : isThis && progress.error
+          ? progress.error
+          : count > 0
+          ? `Уточнено ${donePlural}: ${count}.`
+          : 'Текущие суммы — приближение; кнопка подтянет точный расход из Avito.'}
+      </span>
     </div>
   );
 }
