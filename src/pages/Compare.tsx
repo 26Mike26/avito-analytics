@@ -24,6 +24,7 @@ import {
 import { calcCpl, formatNumber, formatRub, itemsInDateRange } from '../lib/analytics';
 import { parseCsvImport } from '../lib/csvImport';
 import type { AvitoItem, ItemMetrics } from '../types';
+import type { SpendingsBreakdown } from '../services/AvitoAdapter';
 import { itemDailyStatsFromExactSpendRows } from '../services/StatsCacheService';
 
 type Mode = 'date' | 'csv';
@@ -47,9 +48,22 @@ export default function Compare() {
   const spendings = useStore((s) => s.spendings);
   const adapter = useStore((s) => s.adapter);
   const currentAccountId = useStore((s) => s.currentAccountId);
+  const currentAccountMode = useStore((s) =>
+    s.currentAccountId ? s.accounts[s.currentAccountId]?.integration.mode : undefined
+  );
   const saveExactItemDailyStats = useStore((s) => s.saveExactItemDailyStats);
 
   const [mode, setMode] = useState<Mode>('date');
+
+  // Данные, загруженные специально под выбранные периоды сравнения.
+  // Стор хранит метрики только за analyticsPeriod (последняя синхронизация),
+  // поэтому период вне этого окна давал нули. Здесь догружаем union-диапазон.
+  const [rangeMetrics, setRangeMetrics] = useState<ItemMetrics[] | null>(null);
+  const [rangeSpendings, setRangeSpendings] = useState<SpendingsBreakdown | null>(null);
+  const [rangeHasPerItemSpend, setRangeHasPerItemSpend] = useState(false);
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const rangeKeyRef = useRef('');
 
   // ─── Режим «по датам»
   const ranges = useMemo(() => defaultRanges(), []);
@@ -87,11 +101,67 @@ export default function Compare() {
     setter({ items: res.items, metrics: res.metrics, fileName: file.name });
   };
 
+  // Полный диапазон, охватывающий оба периода.
+  const unionFrom = useMemo(() => minDate(dateA.from, dateB.from), [dateA.from, dateB.from]);
+  const unionTo = useMemo(() => maxDate(dateA.to, dateB.to), [dateA.to, dateB.to]);
+
+  // Догружаем метрики и расходы за выбранные периоды (только API-аккаунт, режим «по датам»).
+  // Без этого сравнение видит лишь окно последней синхронизации (analyticsPeriod).
+  useEffect(() => {
+    if (mode !== 'date' || currentAccountMode !== 'api') {
+      setRangeMetrics(null);
+      setRangeSpendings(null);
+      setRangeHasPerItemSpend(false);
+      setRangeError(null);
+      setRangeLoading(false);
+      return;
+    }
+    if (!unionFrom || !unionTo || unionFrom > unionTo || items.length === 0) return;
+    const key = `${currentAccountId ?? ''}:${unionFrom}:${unionTo}`;
+    rangeKeyRef.current = key;
+    let cancelled = false;
+    setRangeLoading(true);
+    setRangeError(null);
+    (async () => {
+      try {
+        const m = await adapter.fetchMetrics(items, { dateFrom: unionFrom, dateTo: unionTo });
+        const perItem = !!adapter.lastMetricsHadV2Spend;
+        let sp: SpendingsBreakdown | null = null;
+        try {
+          sp = await adapter.fetchSpendings({ dateFrom: unionFrom, dateTo: unionTo });
+        } catch {
+          sp = null;
+        }
+        if (cancelled || rangeKeyRef.current !== key) return;
+        setRangeMetrics(m);
+        setRangeSpendings(sp);
+        setRangeHasPerItemSpend(perItem);
+      } catch {
+        if (!cancelled && rangeKeyRef.current === key) {
+          setRangeError('Не удалось загрузить данные за выбранные периоды из Avito.');
+          setRangeMetrics(null);
+          setRangeSpendings(null);
+        }
+      } finally {
+        if (!cancelled && rangeKeyRef.current === key) setRangeLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, currentAccountMode, currentAccountId, unionFrom, unionTo, items, adapter]);
+
+  // Источники данных: догруженные под период (если есть) либо стор.
+  const usingRange = mode === 'date' && rangeMetrics != null;
+  const effectiveMetrics = usingRange ? rangeMetrics : metrics;
+  const effectiveSpendings = usingRange ? rangeSpendings : spendings;
+  const effectiveHasPerItemSpend = usingRange ? rangeHasPerItemSpend : hasPerItemSpend;
+
   const getPeriodSpendTotals = useMemo(
     () =>
       (range: DateRange) => {
-        if (spendings) {
-          const inRange = spendings.byDate.filter(
+        if (effectiveSpendings) {
+          const inRange = effectiveSpendings.byDate.filter(
             (d) => d.date >= range.from && d.date <= range.to
           );
           const ads = inRange.reduce((s, d) => s + d.ads, 0);
@@ -105,7 +175,7 @@ export default function Compare() {
           .reduce((s, c) => s + c.amount, 0);
         return { ads: null, other: Math.max(0, other) };
       },
-    [accountCharges, spendings]
+    [accountCharges, effectiveSpendings]
   );
 
   const datePeriodItems = useMemo(() => {
@@ -115,21 +185,21 @@ export default function Compare() {
     return {
       a: itemsInDateRange(
         items,
-        metrics,
+        effectiveMetrics,
         dateA.from,
         dateA.to,
         accountCharges,
-        hasPerItemSpend,
+        effectiveHasPerItemSpend,
         totalsA.ads,
         totalsA.other
       ),
       b: itemsInDateRange(
         items,
-        metrics,
+        effectiveMetrics,
         dateB.from,
         dateB.to,
         accountCharges,
-        hasPerItemSpend,
+        effectiveHasPerItemSpend,
         totalsB.ads,
         totalsB.other
       ),
@@ -139,9 +209,9 @@ export default function Compare() {
     dateA,
     dateB,
     items,
-    metrics,
+    effectiveMetrics,
     accountCharges,
-    hasPerItemSpend,
+    effectiveHasPerItemSpend,
     getPeriodSpendTotals,
   ]);
 
@@ -354,6 +424,20 @@ export default function Compare() {
               Прошлые 30 дней vs текущие 30
             </button>
           </div>
+          {(rangeLoading || rangeError) && (
+            <div className="mt-3 flex items-center gap-2 text-xs">
+              {rangeLoading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                  <span className="text-ink-300">
+                    Загружаю данные за выбранные периоды из Avito…
+                  </span>
+                </>
+              ) : (
+                <span className="text-rose-300">{rangeError}</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
