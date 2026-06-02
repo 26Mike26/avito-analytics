@@ -18,6 +18,7 @@ import { Badge } from '../components/Badge';
 import { useStore } from '../store/useStore';
 import {
   aggregateMetricsByDate,
+  calcConversion,
   calcCpl,
   calcCtr,
   calculateAccountStats,
@@ -50,6 +51,33 @@ function savePreciseCityCache(key: string, values: Map<string, number>) {
     localStorage.setItem(key, JSON.stringify(Object.fromEntries(values)));
   } catch (error) {
     console.warn('[storage] Не удалось сохранить точные расходы по городам:', error);
+  }
+}
+
+type PreciseItemStat = {
+  views: number;
+  impressions: number;
+  contacts: number;
+  favorites: number;
+  spend: number;
+};
+
+function loadPreciseItemCache(key: string): Map<string, PreciseItemStat> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as Record<string, PreciseItemStat>;
+    return new Map(Object.entries(parsed));
+  } catch {
+    return new Map();
+  }
+}
+
+function savePreciseItemCache(key: string, values: Map<string, PreciseItemStat>) {
+  try {
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(values)));
+  } catch (error) {
+    console.warn('[storage] Не удалось сохранить точные данные по объявлениям:', error);
   }
 }
 
@@ -94,6 +122,28 @@ export default function Analytics() {
     setPreciseCity(loadPreciseCityCache(preciseCityCacheKey));
     setPreciseProgress({ busy: false, done: 0, total: 0 });
   }, [preciseCityCacheKey]);
+
+  // Точные данные по объявлениям (для блока «Лидеры и аутсайдеры»).
+  // Map<itemId, {views, impressions, contacts, favorites, spend}>.
+  const preciseItemCacheKey = useMemo(
+    () =>
+      `avito-precise-item:${currentAccountId ?? 'demo'}:${period.from}:${period.to}:${category}:${region}:${status}`,
+    [currentAccountId, period.from, period.to, category, region, status]
+  );
+  const [preciseItem, setPreciseItem] = useState<Map<string, PreciseItemStat>>(new Map());
+  const [preciseItemProgress, setPreciseItemProgress] = useState<{
+    busy: boolean;
+    done: number;
+    total: number;
+    nextEta?: number;
+  }>({ busy: false, done: 0, total: 0 });
+  const preciseItemCacheKeyRef = useRef(preciseItemCacheKey);
+
+  useEffect(() => {
+    preciseItemCacheKeyRef.current = preciseItemCacheKey;
+    setPreciseItem(loadPreciseItemCache(preciseItemCacheKey));
+    setPreciseItemProgress({ busy: false, done: 0, total: 0 });
+  }, [preciseItemCacheKey]);
 
   const adsTotalFromSpendings = useMemo(() => {
     if (!spendings) return null;
@@ -401,17 +451,42 @@ export default function Analytics() {
     [regDataPrecise, kpi.targetCpl]
   );
 
-  const top = [...filteredItems]
+  // Применяем точные данные по объявлениям (если уточнены) поверх периодных.
+  const itemsForBoard = useMemo(
+    () =>
+      filteredItems.map((it) => {
+        const p = preciseItem.get(String(it.id));
+        if (!p) return it;
+        return {
+          ...it,
+          views: p.views,
+          impressions: p.impressions,
+          contacts: p.contacts,
+          favorites: p.favorites,
+          spend: p.spend,
+        };
+      }),
+    [filteredItems, preciseItem]
+  );
+
+  // Все объявления с активностью за период (есть расход, лиды или просмотры).
+  const activeBoardItems = useMemo(
+    () => itemsForBoard.filter((i) => i.spend > 0 || i.contacts > 0 || i.views > 0),
+    [itemsForBoard]
+  );
+
+  // Лидеры — все объявления с CPL в пределах цели. Без среза в 5.
+  const top = [...activeBoardItems]
     .filter((i) => {
       const cpl = calcCpl(i.spend, i.contacts);
-      return i.spend > 0 && cpl != null && cpl <= kpi.targetCpl;
+      return cpl != null && cpl <= kpi.targetCpl;
     })
-    .sort((a, b) => (calcCpl(a.spend, a.contacts) ?? 0) - (calcCpl(b.spend, b.contacts) ?? 0))
-    .slice(0, 5);
+    .sort((a, b) => (calcCpl(a.spend, a.contacts) ?? 0) - (calcCpl(b.spend, b.contacts) ?? 0));
   const topItemIds = new Set(top.map((i) => String(i.id)));
-  const bottom = [...filteredItems]
+  // Аутсайдеры — остальные активные: CPL выше цели или нет лидов.
+  const bottom = [...activeBoardItems]
     .filter((i) => {
-      if (i.spend <= 0 || topItemIds.has(String(i.id))) return false;
+      if (topItemIds.has(String(i.id))) return false;
       const cpl = calcCpl(i.spend, i.contacts);
       return cpl == null || cpl > kpi.targetCpl;
     })
@@ -421,8 +496,72 @@ export default function Analytics() {
       if (aCpl == null && bCpl != null) return -1;
       if (bCpl == null && aCpl != null) return 1;
       return (bCpl ?? 0) - (aCpl ?? 0);
-    })
-    .slice(0, 5);
+    });
+
+  /**
+   * Уточняет точные данные по всем активным объявлениям блока.
+   * Метрики (views/impressions/contacts/favorites) берём одним вызовом
+   * fetchItemTotals, точный расход — через /stats/v2/spendings по одному
+   * объявлению (rate limit 1 запрос/мин), последовательно. Как на Дашборде.
+   */
+  const runPreciseItemCalc = async () => {
+    if (preciseItemProgress.busy) return;
+    const runCacheKey = preciseItemCacheKey;
+    const ids = Array.from(
+      new Set(
+        activeBoardItems
+          .map((it) => Number(it.id))
+          .filter((n) => Number.isFinite(n) && n > 0 && !preciseItem.has(String(n)))
+      )
+    );
+    const total = ids.length;
+    if (total === 0) return;
+    setPreciseItemProgress({ busy: true, done: 0, total });
+
+    const apiMetrics = await adapter.fetchItemTotals({
+      dateFrom: period.from,
+      dateTo: period.to,
+      itemIds: ids,
+    });
+    if (preciseItemCacheKeyRef.current !== runCacheKey) return;
+    const metricsById = new Map((apiMetrics ?? []).map((row) => [String(row.itemId), row]));
+    const fallbackById = new Map(filteredItems.map((it) => [String(it.id), it]));
+    const next = new Map(preciseItem);
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const key = String(id);
+      const row = metricsById.get(key);
+      const fb = fallbackById.get(key);
+      const exactSpendRows = await adapter.fetchAdsForItemsByDate({
+        dateFrom: period.from,
+        dateTo: period.to,
+        itemIds: [id],
+      });
+      if (preciseItemCacheKeyRef.current !== runCacheKey) return;
+      const exactSpend = exactSpendRows
+        ? exactSpendRows.reduce((sum, r) => sum + Number(r.total ?? 0), 0)
+        : null;
+      next.set(key, {
+        views: Number(row?.views ?? fb?.views ?? 0),
+        impressions: Number(row?.impressions ?? fb?.impressions ?? 0),
+        contacts: Number(row?.contacts ?? fb?.contacts ?? 0),
+        favorites: Number(row?.favorites ?? fb?.favorites ?? 0),
+        spend: exactSpend != null ? Math.round(exactSpend) : Number(fb?.spend ?? 0),
+      });
+      const snapshot = new Map(next);
+      setPreciseItem(snapshot);
+      savePreciseItemCache(runCacheKey, snapshot);
+      setPreciseItemProgress({ busy: true, done: i + 1, total });
+      if (i < ids.length - 1) {
+        const eta = Date.now() + 65_000;
+        setPreciseItemProgress((p) => ({ ...p, nextEta: eta }));
+        await new Promise((res) => setTimeout(res, 65_000));
+        if (preciseItemCacheKeyRef.current !== runCacheKey) return;
+      }
+    }
+    setPreciseItemProgress({ busy: false, done: total, total });
+  };
 
   return (
     <Layout
@@ -587,44 +726,51 @@ export default function Analytics() {
           </ResponsiveContainer>
         </Card>
         <Card title="Лидеры и аутсайдеры">
+          <PreciseCalcBar
+            preciseCount={preciseItem.size}
+            progress={preciseItemProgress}
+            onRun={runPreciseItemCalc}
+            entity="объявления"
+            entityGen="объявлений"
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <div className="text-xs uppercase tracking-wide text-emerald-300 font-semibold mb-2">
-                Лидеры
+                Лидеры ({top.length})
               </div>
-              <ul className="space-y-1.5">
-                {top.map((it) => {
-                  const cpl = calcCpl(it.spend, it.contacts);
-                  const ctr = calcCtr(it.views, it.impressions);
-                  return (
-                    <li key={it.id} className="text-sm flex items-start justify-between gap-3">
-                      <span className="truncate">{it.title}</span>
-                      <span className="text-xs text-emerald-300 shrink-0 text-right leading-5">
-                        {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'CPL —'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              {top.length === 0 ? (
+                <div className="text-xs text-ink-400">Нет объявлений с CPL в пределах цели.</div>
+              ) : (
+                <ul className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                  {top.map((it) => (
+                    <BoardItemRow
+                      key={it.id}
+                      item={it}
+                      tone="good"
+                      precise={preciseItem.has(String(it.id))}
+                    />
+                  ))}
+                </ul>
+              )}
             </div>
             <div>
               <div className="text-xs uppercase tracking-wide text-rose-300 font-semibold mb-2">
-                Аутсайдеры
+                Аутсайдеры ({bottom.length})
               </div>
-              <ul className="space-y-1.5">
-                {bottom.map((it) => {
-                  const cpl = calcCpl(it.spend, it.contacts);
-                  const ctr = calcCtr(it.views, it.impressions);
-                  return (
-                    <li key={it.id} className="text-sm flex items-start justify-between gap-3">
-                      <span className="truncate">{it.title}</span>
-                      <span className="text-xs text-rose-300 shrink-0 text-right leading-5">
-                        {formatNumber(it.contacts)} лидов · {cpl != null ? formatRub(cpl) : 'нет лидов'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              {bottom.length === 0 ? (
+                <div className="text-xs text-ink-400">Нет объявлений с CPL выше цели.</div>
+              ) : (
+                <ul className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+                  {bottom.map((it) => (
+                    <BoardItemRow
+                      key={it.id}
+                      item={it}
+                      tone="bad"
+                      precise={preciseItem.has(String(it.id))}
+                    />
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </Card>
@@ -715,14 +861,60 @@ function CityRow({
  * Avito rate limit /stats/v2/spendings = 1 запрос/мин, поэтому процесс
  * идёт последовательно по всем городам без уже уточнённых.
  */
+function BoardItemRow({
+  item,
+  tone,
+  precise = false,
+}: {
+  item: {
+    id: string | number;
+    title: string;
+    spend: number;
+    contacts: number;
+    views: number;
+    impressions?: number;
+  };
+  tone: 'good' | 'bad';
+  precise?: boolean;
+}) {
+  const cpl = calcCpl(item.spend, item.contacts);
+  const cr = calcConversion(item.views, item.contacts);
+  const ctr = calcCtr(item.views, item.impressions);
+  const accent = tone === 'good' ? 'text-emerald-300' : 'text-rose-300';
+  return (
+    <li className="text-sm flex items-start justify-between gap-3">
+      <span className="truncate min-w-0">
+        {item.title}
+        {precise && (
+          <span
+            title="Точные данные из Avito Pro"
+            className={`ml-1.5 text-[10px] uppercase tracking-wider font-bold ${accent}`}
+          >
+            ✓
+          </span>
+        )}
+      </span>
+      <span className={`text-xs shrink-0 text-right leading-5 ${accent}`}>
+        {formatRub(item.spend)} · {formatNumber(item.contacts)} лид. ·{' '}
+        {cpl != null ? `CPL ${formatRub(cpl)}` : tone === 'good' ? 'CPL —' : 'нет лидов'} · CR{' '}
+        {cr != null ? formatPercent(cr) : '—'} · CTR {ctr != null ? formatPercent(ctr) : '—'}
+      </span>
+    </li>
+  );
+}
+
 function PreciseCalcBar({
   preciseCount,
   progress,
   onRun,
+  entity = 'города',
+  entityGen = 'городов',
 }: {
   preciseCount: number;
   progress: { busy: boolean; done: number; total: number; nextEta?: number };
   onRun: () => void;
+  entity?: string;
+  entityGen?: string;
 }) {
   const [now, setNow] = useState(Date.now());
   // Тикаем раз в секунду — для отображения «осталось N сек до следующего запроса»
@@ -738,7 +930,7 @@ function PreciseCalcBar({
         onClick={onRun}
         disabled={progress.busy}
         className="btn-secondary !px-3 !py-1.5 !min-h-0 disabled:opacity-50"
-        title="Точный расход через Avito API (filter.itemIds). 1 запрос/мин, города уточняются последовательно."
+        title={`Точный расход через Avito API (filter.itemIds). 1 запрос/мин, ${entity} уточняются последовательно.`}
       >
         {progress.busy ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -748,12 +940,12 @@ function PreciseCalcBar({
         {progress.busy
           ? `Уточняю ${progress.done}/${progress.total}${secLeft > 0 ? ` · ${secLeft} c` : ''}`
           : preciseCount > 0
-          ? `Уточнить ещё (точных городов: ${preciseCount})`
+          ? `Уточнить ещё (точных ${entityGen}: ${preciseCount})`
           : 'Уточнить данные'}
       </button>
       {!progress.busy && preciseCount === 0 && (
         <span className="text-ink-400">
-          Текущие суммы — приближение. Кнопка последовательно уточнит все города в Avito.
+          Текущие суммы — приближение. Кнопка последовательно уточнит все {entity} в Avito.
         </span>
       )}
     </div>
